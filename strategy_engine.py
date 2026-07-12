@@ -112,6 +112,7 @@ class StrategyEngine:
                 "initial_total_usdc": self.initial_total_usdc,
                 "trades": self.trades[-200:],  # 保留最近 200 笔
                 "total_trades": self.total_trades,
+                "was_trading": self._trading_enabled,  # 重启后自动恢复交易
                 "updated_at": datetime.now(BJT).isoformat(),
             }
             with open(STATE_FILE, "w") as f:
@@ -189,6 +190,7 @@ class StrategyEngine:
         if self._trading_enabled:
             return False
         self._trading_enabled = True
+        self._save_state()  # 立即保存 was_trading=true，重启后可恢复
         self._log_info("=== 交易已启动 ===")
         # 状态由 _data_loop 在下一轮自动切换为 running
         self._notify_state()
@@ -375,6 +377,10 @@ class StrategyEngine:
                 logger.info("Restored %d trades from saved state", len(old_trades))
             logger.info("Anchor restored from saved state: %.2f (current price: %.2f)",
                         self.anchor_price, price)
+            # 重启后自动恢复交易状态
+            if saved.get("was_trading"):
+                self._trading_enabled = True
+                logger.info("Trading auto-resumed from saved state")
         else:
             self.anchor_price = price
             logger.info("Anchor set to index price: %.2f", self.anchor_price)
