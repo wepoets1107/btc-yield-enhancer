@@ -318,20 +318,30 @@ def api_params():
 
     changed = []
     with engine_lock:
-        # 整数型参数
-        for key in ["poll_interval", "cooldown_seconds",
-                     "rv_update_interval_minutes"]:
+        # 整数型参数（带合理性校验）
+        param_ranges_int = {
+            "poll_interval": (5, 300),
+            "cooldown_seconds": (10, 600),
+            "rv_update_interval_minutes": (5, 1440),
+        }
+        for key, (lo, hi) in param_ranges_int.items():
             if key in data:
                 val = int(data[key])
-                if val > 0:
+                if lo <= val <= hi:
                     engine.cfg[key] = val
                     changed.append(f"{key}={val}")
 
-        # 浮点型参数
-        for key in ["trade_size_usdc", "rv_min", "rv_max", "min_poll_balance_usdc"]:
+        # 浮点型参数（带合理性校验）
+        param_ranges_float = {
+            "trade_size_usdc": (10, 10000),
+            "rv_min": (0.0001, 0.05),
+            "rv_max": (0.001, 0.1),
+            "min_poll_balance_usdc": (10, 10000),
+        }
+        for key, (lo, hi) in param_ranges_float.items():
             if key in data:
                 val = float(data[key])
-                if val > 0:
+                if lo <= val <= hi:
                     engine.cfg[key] = val
                     changed.append(f"{key}={val}")
 
@@ -351,12 +361,26 @@ def api_params():
 
 @app.route("/api/kline")
 def api_kline():
+    """拉主网 BTC_USDC 现货 K 线（公共 API，无需鉴权，不受 testnet 开关影响）"""
     try:
-        client = DeribitClient(DERIBIT_CLIENT_ID, DERIBIT_CLIENT_SECRET, testnet=USE_TESTNET)
+        import requests as _requests
         end = int(pytime.time() * 1000)
         start = end - 7 * 86400 * 1000
-        data = client.get_tradingview_chart_data("BTC_USDC", start, end, "5")
-        return jsonify(data or {"error": "no data"})
+        payload = {
+            "jsonrpc": "2.0", "id": 1,
+            "method": "public/get_tradingview_chart_data",
+            "params": {
+                "instrument_name": "BTC_USDC",
+                "start_timestamp": start,
+                "end_timestamp": end,
+                "resolution": "5",
+            },
+        }
+        resp = _requests.post(
+            "https://www.deribit.com/api/v2/", json=payload, timeout=15
+        )
+        data = resp.json()
+        return jsonify(data.get("result") or {"error": "no data"})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
@@ -416,4 +440,4 @@ if __name__ == "__main__":
     print("  BTC 收益增强策略 - Dashboard + WebSocket")
     print("  http://localhost:5050")
     print("=" * 60)
-    app.run(host="0.0.0.0", port=5050, debug=False)
+    app.run(host="127.0.0.1", port=5050, debug=False)

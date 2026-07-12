@@ -161,15 +161,6 @@ class StrategyEngine:
             logger.error("Fetch instrument error: %s", e)
         return False
 
-    def _trade_size(self) -> float:
-        """固定交易额，仅用户手动修改配置可调整"""
-        return self.cfg["trade_size_usdc"]
-        min_legal = self.min_trade_amount * price
-        if size < min_legal:
-            return 0.0  # 无法交易
-        # 取整到 1 USDC
-        return max(1.0, round(size))
-
     # ------------------------------------------------------------------
     # 公共控制
     # ------------------------------------------------------------------
@@ -433,12 +424,10 @@ class StrategyEngine:
             logger.info("RV: %.2f%% → %.2f%%", old * 100, rv * 100)
 
     def _calculate_daily_rv(self):
-        """用过去 24 根 1 小时 K 线，取 (close-open)/open 的均方根作为 RV
-        RMS 对大波动敏感，不会像均值那样被平滑掉。
-        """
+        """用主网 BTC_USDC 现货 1 小时 K 线，取 (close-open)/open 的均方根作为 RV"""
         end = int(time.time() * 1000)
         start = end - 30 * 3600 * 1000
-        data = self.api.get_tradingview_chart_data("BTC-PERPETUAL", start, end, "60")
+        data = self._fetch_public_kline("BTC_USDC", start, end, "60")
         if not data or not data.get("close") or not data.get("open"):
             return self._fallback_rv()
 
@@ -467,6 +456,30 @@ class StrategyEngine:
 
     def _fallback_rv(self):
         return self.cfg["rv_min"]
+
+    @staticmethod
+    def _fetch_public_kline(instrument, start_ms, end_ms, resolution):
+        """通过主网公共 API 获取 K 线数据（无需鉴权，不受 testnet 影响）"""
+        try:
+            import requests
+            payload = {
+                "jsonrpc": "2.0", "id": 1,
+                "method": "public/get_tradingview_chart_data",
+                "params": {
+                    "instrument_name": instrument,
+                    "start_timestamp": int(start_ms),
+                    "end_timestamp": int(end_ms),
+                    "resolution": resolution,
+                },
+            }
+            resp = requests.post(
+                "https://www.deribit.com/api/v2/", json=payload, timeout=15
+            )
+            data = resp.json()
+            return data.get("result")
+        except Exception as e:
+            logger.warning("Fetch public kline failed: %s", e)
+            return None
 
     # ------------------------------------------------------------------
     # 价格与余额
@@ -718,163 +731,6 @@ class StrategyEngine:
     # ------------------------------------------------------------------
     # 交易执行
     # ------------------------------------------------------------------
-
-    def _place_buy_order(self, btc_amount, is_initial=False):
-        """买入：maker 限价单，未成交则重挂，部分成交则等待"""
-        return self._execute_maker_order("buy", btc_amount, "init" if is_initial else "buy")
-
-    def _place_sell_order(self, btc_amount):
-        """卖出：maker 限价单，未成交则重挂，部分成交则等待"""
-        return self._execute_maker_order("sell", btc_amount, "sell")
-
-    def _execute_maker_order(self, side, total_amount, label):
-        """
-        执行 maker 限价单，确保全部成交：
-        1. 下限价单 + post_only
-        2. 每 3 秒查一次，最多等 60 秒
-        3. 全部成交 → 返回
-        4. 部分成交 → 继续等
-        5. 60 秒未全部成交 → 取消剩余，用新价格重挂未成交部分
-        6. 最多重试 3 轮
-        """
-        inst = self.cfg["instrument_name"]
-        remaining = total_amount
-        total_filled = 0.0
-        total_cost = 0.0
-        all_fills = []
-        order_ids = []
-
-        for round_num in range(3):
-            if remaining < self.min_trade_amount:
-                break
-
-            price = self.btc_index_price
-            if price <= 0:
-                break
-
-            amount = self._round_amount(remaining)
-            if amount < self.min_trade_amount:
-                break
-
-            # 下单
-            if side == "buy":
-                result = self.api.buy(inst, amount=amount, order_type="limit",
-                                      price=price, label=label, post_only=True)
-            else:
-                result = self.api.sell(inst, amount=amount, order_type="limit",
-                                       price=price, label=label, post_only=True)
-
-            if not result["success"]:
-                logger.error("%s order failed (round %d): %s", side, round_num + 1, result.get("error"))
-                self._add_error(f"{side} failed: {result.get('error')}")
-                break
-
-            parsed = self.api.parse_order_result(result["result"] or {})
-            order_id = parsed["order_id"]
-            order_ids.append(order_id)
-
-            # 轮询等待成交（每 3 秒查一次，最多 60 秒）
-            start_time = time.time()
-            while time.time() - start_time < 60:
-                if parsed["filled_amount"] >= amount - 1e-10:
-                    break  # 全部成交
-                time.sleep(3)
-                order_result = self.api.get_order_state(order_id)
-                if order_result["success"]:
-                    parsed = self.api.parse_order_result(order_result["result"] or {})
-                logger.info("%s order %s round %d: filled=%.6f/%.6f state=%s",
-                            side, order_id, round_num + 1, parsed["filled_amount"], amount, parsed["state"])
-
-            filled_this_round = parsed["filled_amount"]
-            if filled_this_round > 0 and parsed["average_price"] > 0:
-                total_filled += filled_this_round
-                total_cost += filled_this_round * parsed["average_price"]
-                all_fills.extend(parsed["fills"])
-
-            # 全部成交 → 完成
-            if filled_this_round >= amount - 1e-10:
-                logger.info("%s fully filled in round %d: %.6f BTC", side, round_num + 1, total_filled)
-                break
-
-            # 未全部成交 → 取消剩余，重挂
-            if parsed["order_id"]:
-                self.api.cancel_order(parsed["order_id"])
-                logger.info("%s order %s cancelled after 60s (filled=%.6f, remaining=%.6f)",
-                            side, order_id, filled_this_round, amount - filled_this_round)
-
-            remaining = remaining - filled_this_round
-            if remaining < self.min_trade_amount:
-                logger.info("%s remaining %.6f too small, done", side, remaining)
-                break
-
-        if total_filled <= 0:
-            return None
-
-        avg_price = total_cost / total_filled if total_filled > 0 else 0
-        trade = {
-            "id": f"{'B' if side == 'buy' else 'S'}{int(time.time())}",
-            "time": datetime.now(BJT).isoformat(),
-            "side": side,
-            "amount_btc": total_filled,
-            "price": avg_price,
-            "total_usdc": round(total_cost, 2),
-            "order_id": ",".join(order_ids),
-            "status": "filled",
-            "label": label,
-            "fills": all_fills,
-        }
-        logger.info("%s done: total filled=%.6f @ avg %.2f (%d rounds)",
-                    side, total_filled, avg_price, len(order_ids))
-        with self._lock:
-            self.trades.append(trade)
-            self.total_trades += 1
-        return trade
-
-    def _execute_buy(self):
-        size = self._trade_size()
-        if size <= 0:
-            return
-        price = self.btc_index_price
-        if price <= 0:
-            return
-        amount = self._round_amount(size / price)
-        if amount < self.min_trade_amount:
-            return
-        if amount * price > self.usdc_balance:
-            self.usdc_insufficient = True
-            return
-
-        self._log_info("Executing BUY: %.6f BTC (%.2f USDC)", amount, size)
-        trade = self._place_buy_order(amount)
-        if trade and trade["price"] > 0:
-            self.anchor_price = trade["price"]
-            self._recalc_thresholds()
-            self._save_state()
-            self._log_info("BUY done: new anchor=%.2f", self.anchor_price)
-            self._fetch_balances()
-
-    def _execute_sell(self):
-        size = self._trade_size()
-        if size <= 0:
-            return
-        price = self.btc_index_price
-        if price <= 0:
-            return
-        amount = self._round_amount(size / price)
-        if amount < self.min_trade_amount:
-            return
-        if amount > self.btc_balance:
-            self.btc_insufficient = True
-            return
-
-        self._log_info("Executing SELL: %.6f BTC (%.2f USDC)", amount, size)
-        trade = self._place_sell_order(amount)
-        if trade and trade["price"] > 0:
-            self.anchor_price = trade["price"]
-            self._recalc_thresholds()
-            self._save_state()
-            self._log_info("SELL done: new anchor=%.2f", self.anchor_price)
-            self._fetch_balances()
 
     # ------------------------------------------------------------------
     # 辅助

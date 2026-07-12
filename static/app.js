@@ -67,6 +67,8 @@
 
     $("chartCard").style.display = "";
     fetchKline();
+    // 每 5 分钟刷新一次 K 线
+    setInterval(fetchKline, 5 * 60 * 1000);
 
     var ro = new ResizeObserver(function () {
       if (chart) chart.applyOptions({ width: el.clientWidth });
@@ -295,7 +297,6 @@
   // ---- 启动 ----
   async function init() {
     createChart();
-    if (candleSeries) await fetchKline();
 
     // 自动初始化引擎（只同步数据，不启动交易）
     try {
