@@ -1,0 +1,272 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>BTC 收益增强策略 · 仪表盘</title>
+<style>
+:root{
+  --bg:#0d1117; --bg-card:rgba(22,27,34,0.82); --bg-elevated:#161b22;
+  --border:rgba(48,54,61,0.6); --border-strong:#30363d;
+  --text:#f0f6fc; --text-dim:#8b949e; --text-faint:#484f58;
+  --up:#3fb950; --down:#f85149; --warn:#d29922; --accent:#58a6ff;
+  --glass:rgba(22,27,34,0.72); --glass-hover:rgba(28,33,40,0.82);
+  --sans:-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans SC",Roboto,Helvetica,Arial,sans-serif;
+  --mono:"SF Mono","Cascadia Code","Consolas",monospace;
+}
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+body{
+  font-family:var(--sans); background:var(--bg); color:var(--text);
+  min-height:100vh; padding:16px; -webkit-font-smoothing:antialiased;
+}
+.container{max-width:1400px;margin:0 auto}
+
+/* ---- Top Bar ---- */
+.topbar{
+  display:flex;align-items:center;justify-content:space-between;
+  padding:14px 22px;background:var(--glass);border:1px solid var(--border);
+  border-radius:14px;margin-bottom:16px;gap:12px;flex-wrap:wrap;
+}
+.topbar h1{font-size:18px;font-weight:600;display:flex;align-items:center;gap:8px}
+.badge{font-size:11px;padding:2px 10px;border-radius:6px;font-weight:500}
+.badge.running{background:#238636;color:#fff}
+.badge.ready{background:rgba(210,153,34,0.2);color:var(--warn)}
+.badge.paused{background:#d29922;color:#fff}
+.badge.stopped{background:#484f58;color:#fff}
+.badge.error{background:#da3633;color:#fff}
+.badge.initializing{background:#1f6feb;color:#fff}
+.badge.stopped{background:#484f58;color:#fff}
+.badge.error{background:#da3633;color:#fff}
+.badge.initializing{background:#1f6feb;color:#fff}
+.topbar-actions{display:flex;gap:6px;flex-wrap:wrap}
+.btn{padding:7px 16px;border:1px solid var(--border-strong);border-radius:8px;
+  font-size:12px;font-weight:500;cursor:pointer;background:#21262d;color:var(--text-dim);
+  transition:all .15s;white-space:nowrap}
+.btn:hover{background:#30363d;color:var(--text)}
+.btn-primary{background:#238636;border-color:#2ea043;color:#fff}
+.btn-primary:hover{background:#2ea043}
+.btn-danger{background:#da3633;border-color:#f85149;color:#fff}
+.btn-danger:hover{background:#f85149}
+.btn-save{background:#9e6a03;border-color:#d29922;color:#fff}
+.btn-save:hover{background:#d29922}
+.btn:disabled{opacity:.4;cursor:not-allowed}
+.topbar-info{font-size:12px;color:var(--text-dim);text-align:right;line-height:1.6}
+
+/* ---- Chart ---- */
+.chart-card{background:var(--glass);border:1px solid var(--border);border-radius:14px;
+  padding:16px;margin-bottom:16px;backdrop-filter:blur(8px)}
+.chart-card .card-title{font-size:11px;font-weight:600;text-transform:uppercase;
+  letter-spacing:.05em;color:var(--text-dim);margin-bottom:8px}
+#priceChart{width:100%;height:280px}
+
+/* ---- Grid ---- */
+.grid-4{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:16px}
+@media(max-width:1000px){.grid-4{grid-template-columns:repeat(2,1fr)}}
+@media(max-width:600px){.grid-4{grid-template-columns:1fr}}
+
+.card{background:var(--glass);border:1px solid var(--border);border-radius:14px;
+  padding:16px;backdrop-filter:blur(8px)}
+.card-title{font-size:11px;font-weight:600;text-transform:uppercase;
+  letter-spacing:.05em;color:var(--text-dim);margin-bottom:12px}
+.row{display:flex;justify-content:space-between;align-items:center;
+  padding:5px 0;border-bottom:1px solid rgba(48,54,61,0.3)}
+.row:last-child{border-bottom:none}
+.lbl{font-size:12px;color:var(--text-dim)}
+.val{font-size:14px;font-weight:600;font-variant-numeric:tabular-nums}
+.val.up{color:var(--up)}
+.val.down{color:var(--down)}
+.val.warn{color:var(--warn)}
+.val.highlight{color:var(--accent)}
+
+/* ---- 可编辑输入 ---- */
+.val-input{
+  font-size:14px;font-weight:600;font-variant-numeric:tabular-nums;
+  background:rgba(13,17,23,0.6);border:1px solid var(--border-strong);
+  border-radius:4px;padding:2px 6px;color:var(--text);width:120px;text-align:right;
+}
+.val-input.highlight{color:var(--accent)}
+.val-input:focus{border-color:var(--accent);outline:none}
+.btn-sm{
+  font-size:10px;padding:2px 8px;border:1px solid var(--border-strong);
+  border-radius:4px;cursor:pointer;background:#21262d;color:var(--text-dim);
+  float:right;
+}
+.btn-sm:hover{background:#30363d;color:var(--text)}
+
+/* ---- Trade Table ---- */
+.trade-section{margin-bottom:16px}
+.trade-table{width:100%;border-collapse:collapse;font-size:12px}
+.trade-table th{text-align:left;padding:8px 10px;font-weight:500;
+  color:var(--text-dim);border-bottom:1px solid var(--border-strong);white-space:nowrap}
+.trade-table td{padding:8px 10px;border-bottom:1px solid rgba(48,54,61,0.25);
+  font-variant-numeric:tabular-nums}
+.trade-table tr:hover td{background:var(--glass-hover)}
+.tag{display:inline-block;padding:1px 7px;border-radius:4px;font-size:11px;font-weight:600}
+.tag.buy{background:rgba(63,185,80,0.2);color:var(--up)}
+.tag.sell{background:rgba(248,81,73,0.2);color:var(--down)}
+.no-data{color:var(--text-faint);text-align:center;padding:24px;font-size:13px}
+
+/* ---- System ---- */
+.sys-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:8px}
+.sys-item{display:flex;align-items:center;gap:8px;padding:7px 12px;
+  background:var(--bg);border-radius:6px;font-size:12px;color:var(--text-dim)}
+.dot{width:7px;height:7px;border-radius:50%;flex-shrink:0}
+.dot.green{background:var(--up)}
+.dot.red{background:var(--down)}
+.dot.yellow{background:var(--warn)}
+.dot.gray{background:#484f58}
+.dot.gray{background:var(--text-faint)}
+
+#errorList{margin-top:8px;max-height:100px;overflow-y:auto}
+.err-item{font-size:11px;padding:3px 0;color:var(--down);font-family:var(--mono)}
+
+/* ---- 图表图例 ---- */
+.legend{display:flex;flex-wrap:wrap;gap:10px 18px;margin-bottom:8px;font-size:11px;color:var(--text-dim);align-items:center}
+.lg{display:inline-block;width:22px;height:0;vertical-align:middle;margin-right:4px;flex-shrink:0}
+.lg-line{height:3px;border-radius:1px}
+.lg-up{background:#26a69a}
+.lg-down{background:#ef5350}
+.lg-solid{height:2px;border-radius:1px}
+.lg-dash{height:0;border-top:2px dashed}
+.lg-dot{height:0;border-top:2px dotted}
+.lg-blue{background:#58a6ff;border-color:#58a6ff}
+.lg-gold{border-color:#ffd700}
+.lg-green{border-color:#3fb950}
+.lg-red{border-color:#f85149}
+</style>
+</head>
+<body>
+<div class="container">
+  <!-- Top Bar -->
+  <div class="topbar">
+    <h1>⚡ BTC 收益增强策略 <span class="badge stopped" id="statusBadge">已停止</span><span id="tradingLabel" style="font-size:12px;margin-left:8px;color:var(--text-dim)"></span></h1>
+    <div class="topbar-actions">
+      <button class="btn btn-primary" id="btnStart">▶ 启动</button>
+      <button class="btn btn-danger" id="btnStop" disabled>⏹ 停止</button>
+      <button class="btn" id="btnTest">🔌 测试连接</button>
+      <button class="btn btn-save" id="btnSaveParams">💾 保存参数</button>
+    </div>
+    <div class="topbar-info">
+      <div id="lastUpdate">等待数据...</div>
+      <div style="font-size:11px;color:var(--text-faint)" id="topbarExtra">BTC/USDC · 轮询 30s</div>
+    </div>
+  </div>
+
+  <!-- Price Chart -->
+  <div class="chart-card" id="chartCard" style="display:none">
+    <div class="card-title">📈 BTC 价格 · K 线 + 策略线</div>
+    <div class="legend" id="chartLegend">
+      <span class="lg lg-line lg-up"></span><span>K 线涨</span>
+      <span class="lg lg-line lg-down"></span><span>K 线跌</span>
+      <span class="lg lg-dash lg-gold"></span><span>锚点</span>
+      <span class="lg lg-dot lg-green"></span><span>卖出阈值</span>
+      <span class="lg lg-dot lg-red"></span><span>买入阈值</span>
+    </div>
+    <div id="priceChart"></div>
+  </div>
+
+  <!-- 4-Column Stats -->
+  <div class="grid-4">
+    <div class="card">
+      <div class="card-title">💰 余额</div>
+      <div class="row"><span class="lbl">USDC</span><span class="val" id="vUsdc">--</span></div>
+      <div class="row"><span class="lbl">BTC</span><span class="val" id="vBtc">--</span></div>
+      <div class="row"><span class="lbl">BTC 价值</span><span class="val highlight" id="vBtcValue">--</span></div>
+      <div class="row"><span class="lbl">总资产</span><span class="val" id="vTotal">--</span></div>
+    </div>
+    <div class="card">
+      <div class="card-title">📐 参数</div>
+      <div class="row"><span class="lbl">RV/小时</span><span class="val highlight" id="vRv">--</span></div>
+      <div class="row"><span class="lbl">价格锚</span><input class="val-input highlight" id="inpAnchor" type="number" step="0.01"></div>
+      <div class="row"><span class="lbl">交易额</span><input class="val-input" id="inpTradeSize" type="number" step="10"></div>
+      <div class="row"><span class="lbl">卖出阈值</span><span class="val up" id="vUpper">--</span></div>
+      <div class="row"><span class="lbl">买入阈值</span><span class="val down" id="vLower">--</span></div>
+    </div>
+    <div class="card">
+      <div class="card-title">⚙️ 策略配置</div>
+      <div class="row"><span class="lbl">RV 下限 %</span><input class="val-input" id="inpRvMin" type="number" step="0.0001" min="0.0001" max="0.05"></div>
+      <div class="row"><span class="lbl">RV 上限 %</span><input class="val-input" id="inpRvMax" type="number" step="0.0001" min="0.001" max="0.1"></div>
+      <div class="row"><span class="lbl">RV 更新间隔(分)</span><input class="val-input" id="inpRvInterval" type="number" step="5" min="5" max="1440"></div>
+      <div class="row"><span class="lbl">轮询间隔(秒)</span><input class="val-input" id="inpPoll" type="number" step="5" min="5" max="300"></div>
+      <div class="row"><span class="lbl">冷却期(秒)</span><input class="val-input" id="inpCooldown" type="number" step="10" min="10" max="600"></div>
+      <div class="row"><span class="lbl">资金阈值 $</span><input class="val-input" id="inpBalanceThreshold" type="number" step="50" min="10" max="10000"></div>
+      <div class="row" style="font-size:10px;color:var(--text-dim);margin-top:4px"><span>RV = 24根小时线涨跌幅的均方根(RMS)，对大波动敏感</span></div>
+    </div>
+    <div class="card">
+      <div class="card-title">📊 实时</div>
+      <div class="row"><span class="lbl">BTC 指数</span><span class="val highlight" id="vPrice">--</span></div>
+      <div class="row"><span class="lbl">偏离锚点</span><span class="val" id="vDeviation">--</span></div>
+      <div class="row"><span class="lbl">交易次数</span><span class="val" id="vTrades">0</span></div>
+      <div class="row"><span class="lbl">盈亏</span><span class="val" id="vTotalPnl">--</span></div>
+    </div>
+    <div class="card">
+      <div class="card-title">⚠️ 资金</div>
+      <div class="row"><span class="lbl">初始总资产</span><span class="val" id="vInitTotal">--</span></div>
+      <div class="row"><span class="lbl">USDC 状态</span><span class="val" id="vUsdcStatus">--</span></div>
+      <div class="row"><span class="lbl">BTC 状态</span><span class="val" id="vBtcStatus">--</span></div>
+      <div class="row"><span class="lbl">RV 更新</span><span class="val" id="vRvStatus">--</span></div>
+    </div>
+  </div>
+
+  <!-- API 凭证 -->
+  <div class="card" style="margin-top:16px;margin-bottom:20px">
+    <div class="card-title">🔑 Deribit API <button class="btn-sm" id="btnSaveCreds">💾 保存凭证</button></div>
+    <div style="display:flex;flex-wrap:wrap;gap:16px;align-items:flex-end">
+      <div style="flex:1;min-width:180px">
+        <div style="font-size:11px;color:var(--text-dim);margin-bottom:3px">Client ID</div>
+        <input class="val-input" id="inpApiId" type="text" style="width:100%;font-family:monospace" placeholder="从环境变量加载">
+      </div>
+      <div style="flex:1;min-width:180px">
+        <div style="font-size:11px;color:var(--text-dim);margin-bottom:3px">Client Secret</div>
+        <input class="val-input" id="inpApiSecret" type="password" style="width:100%;font-family:monospace" placeholder="从环境变量加载">
+      </div>
+      <div style="flex:1;min-width:120px">
+        <div style="font-size:11px;color:var(--text-dim);margin-bottom:3px">网络</div>
+        <select class="val-input" id="inpTestnet" style="width:100%">
+          <option value="1">Testnet</option>
+          <option value="0">Mainnet</option>
+        </select>
+      </div>
+      <div style="font-size:10px;color:var(--text-dim);padding-bottom:6px">⚠ 修改凭证会断开当前连接并重建</div>
+    </div>
+  </div>
+
+  <!-- 当前挂单 -->
+  <div class="card trade-section">
+    <div class="card-title">📌 当前挂单 <span style="font-size:11px;color:var(--text-dim)" id="orderCount"></span></div>
+    <table class="trade-table" id="orderTable">
+      <thead><tr><th>时间</th><th>方向</th><th>挂单量</th><th>已成交</th><th>剩余</th><th>价格</th><th>状态</th></tr></thead>
+      <tbody id="orderBody"></tbody>
+    </table>
+    <div class="no-data" id="noOrders">暂无挂单</div>
+  </div>
+
+  <!-- Trade History -->
+  <div class="card trade-section">
+    <div class="card-title">📋 交易记录 (最近50笔)</div>
+    <table class="trade-table" id="tradeTable">
+      <thead><tr><th>时间</th><th>方向</th><th>数量 BTC</th><th>价格</th><th>金额 USDC</th><th>状态</th></tr></thead>
+      <tbody id="tradeBody"></tbody>
+    </table>
+    <div class="no-data" id="noTrades">暂无交易记录</div>
+  </div>
+
+  <!-- System Status -->
+  <div class="card">
+    <div class="card-title">🔧 系统状态</div>
+    <div class="sys-grid">
+      <div class="sys-item"><span class="dot gray" id="dotApi"></span>API: <span id="sApi">断开</span></div>
+      <div class="sys-item"><span class="dot gray" id="dotEngine"></span>策略: <span id="sEngine">已停止</span></div>
+      <div class="sys-item"><span class="dot gray"></span>交易所: Deribit</div>
+      <div class="sys-item"><span class="dot gray"></span>轮询: <span id="sPoll">30</span>s</div>
+      <div class="sys-item"><span class="dot gray"></span>启动: <span id="sStart">--</span></div>
+      <div class="sys-item"><span class="dot gray" id="dotRv"></span>RV更新: <span id="sRv">--</span></div>
+    </div>
+    <div id="errorList"></div>
+  </div>
+</div>
+
+<script src="/static/lightweight-charts.standalone.production.js"></script>
+<script src="/static/app.js?v=10"></script>
+</body>
+</html>
