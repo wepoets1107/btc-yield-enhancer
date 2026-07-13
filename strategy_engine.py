@@ -576,7 +576,7 @@ class StrategyEngine:
     # ------------------------------------------------------------------
 
     def _recalc_thresholds(self):
-        rv = self.daily_rv * 0.5  # 用 1/2 日化 RV 设通道宽度
+        rv = self.daily_rv  # 用完整日化 RV 设通道宽度
         self.upper_threshold = round(self.anchor_price * (1 + rv))   # tick_size=1
         self.lower_threshold = round(self.anchor_price * (1 - rv))
 
