@@ -190,7 +190,7 @@ body{
       <div class="row"><span class="lbl">轮询间隔(秒)</span><input class="val-input" id="inpPoll" type="number" step="5" min="5" max="300"></div>
       <div class="row"><span class="lbl">冷却期(秒)</span><input class="val-input" id="inpCooldown" type="number" step="10" min="10" max="600"></div>
       <div class="row"><span class="lbl">资金阈值 $</span><input class="val-input" id="inpBalanceThreshold" type="number" step="50" min="10" max="10000"></div>
-      <div class="row" style="font-size:10px;color:var(--text-dim);margin-top:4px"><span>RV = 日化波动率(小时RMS×√24)，通道取半宽</span></div>
+      <div class="row" style="font-size:10px;color:var(--text-dim);margin-top:4px"><span>RV = 12根5分钟线RMS × √24(日化)，通道取半宽</span></div>
     </div>
     <div class="card">
       <div class="card-title">📊 实时</div>
@@ -267,6 +267,6 @@ body{
 </div>
 
 <script src="/static/lightweight-charts.standalone.production.js"></script>
-<script src="/static/app.js?v=12"></script>
+<script src="/static/app.js?v=13"></script>
 </body>
 </html>

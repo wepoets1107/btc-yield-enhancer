@@ -35,7 +35,7 @@ DEFAULT_CONFIG = {
     "trade_size_usdc": 200.0,
     "rv_min": 0.007,       # 日化 RV 下限 0.7%
     "rv_max": 0.07,        # 日化 RV 上限 7.0%
-    "rv_update_interval_minutes": 60,  # RV 更新间隔（分钟）
+    "rv_update_interval_minutes": 15,  # RV 更新间隔（分钟，5分钟线12根窗口）
     "poll_interval": 30,
     "cooldown_seconds": 60,          # 交易冷却期（秒）
     "instrument_name": "BTC_USDC",
@@ -431,10 +431,10 @@ class StrategyEngine:
             logger.info("RV: %.2f%% → %.2f%%", old * 100, rv * 100)
 
     def _calculate_daily_rv(self):
-        """用主网 BTC_USDC 现货 1 小时 K 线，取 RMS × √24 作为日化 RV"""
+        """用主网 BTC_USDC 现货 5 分钟 K 线，取 12 根(1小时窗口)的 RMS × √24 作为日化 RV"""
         end = int(time.time() * 1000)
-        start = end - 30 * 3600 * 1000
-        data = self._fetch_public_kline("BTC_USDC", start, end, "60")
+        start = end - 3 * 3600 * 1000  # 拉3小时确保有12根
+        data = self._fetch_public_kline("BTC_USDC", start, end, "5")
         if not data or not data.get("close") or not data.get("open"):
             return self._fallback_rv()
 
@@ -444,8 +444,8 @@ class StrategyEngine:
         if min_len < 12:
             return self._fallback_rv()
 
-        opens = opens[-24:]
-        closes = closes[-24:]
+        opens = opens[-12:]
+        closes = closes[-12:]
 
         sq_sum = 0.0
         n = 0
