@@ -16,9 +16,7 @@ for %%d in (
     "%LocalAppData%\Programs\Python\Python313\python.exe"
     "%LocalAppData%\Programs\Python\Python312\python.exe"
     "%LocalAppData%\Programs\Python\Python314\python.exe"
-) do (
-    if exist %%d set "PYTHON=%%d" && goto :found
-)
+) do if exist %%d set "PYTHON=%%~f" & goto :found
 where python >nul 2>&1 && set "PYTHON=python" && goto :found
 goto :kill
 

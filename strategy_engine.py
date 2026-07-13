@@ -33,8 +33,8 @@ STATE_FILE = os.path.join(os.path.dirname(__file__), "state.json")
 
 DEFAULT_CONFIG = {
     "trade_size_usdc": 200.0,
-    "rv_min": 0.0015,      # 小时化 RV 下限 0.15%
-    "rv_max": 0.015,       # 小时化 RV 上限 1.5%
+    "rv_min": 0.007,       # 日化 RV 下限 0.7%
+    "rv_max": 0.07,        # 日化 RV 上限 7.0%
     "rv_update_interval_minutes": 60,  # RV 更新间隔（分钟）
     "poll_interval": 30,
     "cooldown_seconds": 60,          # 交易冷却期（秒）
@@ -88,7 +88,8 @@ class StrategyEngine:
         self.total_pnl = 0.0
         self.total_trades = 0
         self.btc_cost_basis = 0.0
-        self._cooldown_until = 0.0        # 防频繁交易的冷却时间
+        self._cooldown_until = 0.0        # 防频繁交易的冷却时间（秒时间戳）
+        self._cooldown_seconds = 180       # 冷静期：每次成交后暂停 3 分钟
         self._trading_enabled = False      # 交易开关：就绪后默认不交易，用户点击"启动"才开
         self.open_orders: list[dict] = []  # 当前挂单列表
         self._our_buy_id: Optional[str] = None   # 我们挂的买入单 ID
@@ -430,7 +431,7 @@ class StrategyEngine:
             logger.info("RV: %.2f%% → %.2f%%", old * 100, rv * 100)
 
     def _calculate_daily_rv(self):
-        """用主网 BTC_USDC 现货 1 小时 K 线，取 (close-open)/open 的均方根作为 RV"""
+        """用主网 BTC_USDC 现货 1 小时 K 线，取 RMS × √24 作为日化 RV"""
         end = int(time.time() * 1000)
         start = end - 30 * 3600 * 1000
         data = self._fetch_public_kline("BTC_USDC", start, end, "60")
@@ -458,7 +459,8 @@ class StrategyEngine:
             return self._fallback_rv()
 
         rv = math.sqrt(sq_sum / n)
-        return max(self.cfg["rv_min"], min(self.cfg["rv_max"], rv))
+        rv_daily = rv * math.sqrt(24)  # 小时 RMS → 日化 RV
+        return max(self.cfg["rv_min"], min(self.cfg["rv_max"], rv_daily))
 
     def _fallback_rv(self):
         return self.cfg["rv_min"]
@@ -574,7 +576,7 @@ class StrategyEngine:
     # ------------------------------------------------------------------
 
     def _recalc_thresholds(self):
-        rv = self.daily_rv
+        rv = self.daily_rv * 0.5  # 用 1/2 日化 RV 设通道宽度
         self.upper_threshold = round(self.anchor_price * (1 + rv))   # tick_size=1
         self.lower_threshold = round(self.anchor_price * (1 - rv))
 
@@ -588,6 +590,18 @@ class StrategyEngine:
         anchor = self.anchor_price
         if anchor <= 0 or self.daily_rv <= 0:
             return
+
+        # --- 方案A：指数价与锚点偏差超过日化RV时，自动重置锚点 ---
+        idx = self.btc_index_price
+        if idx > 0 and anchor > 0:
+            deviation = abs(idx / anchor - 1)
+            if deviation > self.daily_rv:
+                old_anchor = anchor
+                self.anchor_price = idx
+                anchor = idx
+                self._recalc_thresholds()
+                self._log_info("Anchor reset from %.2f to %.2f (deviation %.4f%%)",
+                               old_anchor, idx, deviation * 100)
 
         buy_price = round(self.lower_threshold)  # tick_size=1 → 整数
         sell_price = round(self.upper_threshold)
@@ -630,10 +644,23 @@ class StrategyEngine:
 
                 self._log_info("%s maker order %s was filled!", side_key, our_id)
                 setattr(self, our_id_attr, None)
-                # 用阈值价作为成交价（挂单就在这个价位，远比指数价准确）
-                fill_price = sell_price if side_key == "sell" else buy_price
-                self.anchor_price = fill_price
+                # 触发冷静期
+                self._cooldown_until = time.time() + self._cooldown_seconds
+                self._log_info("Cooldown activated: %ds", self._cooldown_seconds)
+                # 从交易所拉实际成交价（比阈值价更准确）
+                fill_price = sell_price if side_key == "sell" else buy_price  # 默认值
                 trade_amount = self.cfg["trade_size_usdc"] / fill_price
+                try:
+                    order_result = self.api.get_order_state(our_id)
+                    if order_result["success"]:
+                        parsed = self.api.parse_order_result(order_result["result"] or {})
+                        if parsed["average_price"] > 0:
+                            fill_price = parsed["average_price"]
+                            trade_amount = parsed["filled_amount"]
+                            self._log_info("Actual fill: %.6f BTC @ %.2f", trade_amount, fill_price)
+                except Exception:
+                    pass
+                self.anchor_price = fill_price
                 self._recalc_thresholds()
                 self._fetch_balances()
                 # 记录成交
@@ -670,6 +697,12 @@ class StrategyEngine:
                         self._our_sell_id = None
                     self._log_info("Cancelled stale %s order at %.2f (target %.2f)",
                                    o["side"], o["price"], target)
+
+        # --- 冷静期：成交后 3 分钟内不挂新单（但成交检测照常进行）---
+        if time.time() < self._cooldown_until:
+            self._log_info("Cooldown active, skipping new orders (%ds left)",
+                           int(self._cooldown_until - time.time()))
+            return
 
         # --- 计算下单量 ---
         def calc_amount(price):
