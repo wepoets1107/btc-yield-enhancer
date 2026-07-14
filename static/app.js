@@ -175,6 +175,11 @@
     }
     setVal("vTotalPnl", tp, tpCls);
 
+    // 交易盈亏
+    var tPnl = data.trading_pnl != null ? data.trading_pnl : 0;
+    var tPnlStr = (tPnl >= 0 ? "+" : "") + tPnl.toFixed(2);
+    setVal("vTradePnl", tPnlStr, clsVal(tPnl));
+
     setVal("vInitTotal", fmtUsdc(data.initial_total_usdc));
     setVal("vUsdcStatus", data.usdc_insufficient ? "⚠ 不足" : "正常", data.usdc_insufficient ? "warn" : "");
     setVal("vBtcStatus", data.btc_insufficient ? "⚠ 不足" : "正常", data.btc_insufficient ? "warn" : "");

@@ -32,9 +32,9 @@ BJT = timezone(timedelta(hours=8))
 STATE_FILE = os.path.join(os.path.dirname(__file__), "state.json")
 
 DEFAULT_CONFIG = {
-    "trade_size_usdc": 200.0,
-    "rv_min": 0.007,       # 日化 RV 下限 0.7%
-    "rv_max": 0.07,        # 日化 RV 上限 7.0%
+    "trade_size_usdc": 100.0,
+    "rv_min": 0.005,       # 日化 RV 下限 0.5%
+    "rv_max": 0.05,        # 日化 RV 上限 5.0%
     "rv_update_interval_minutes": 15,  # RV 更新间隔（分钟，5分钟线12根窗口）
     "poll_interval": 30,
     "cooldown_seconds": 60,          # 交易冷却期（秒）
@@ -51,6 +51,12 @@ class StrategyEngine:
         self.api = DeribitClient(client_id, client_secret, testnet=testnet)
         self.testnet = testnet
         self.cfg = {**DEFAULT_CONFIG, **(config or {})}
+        # 从 state.json 恢复运行时修改的配置（只恢复用户可调的键，不覆盖新默认值）
+        _saved = self._load_state()
+        if _saved and isinstance(_saved.get("config"), dict):
+            for _k in ["rv_min", "rv_max", "trade_size_usdc", "cooldown_seconds"]:
+                if _k in _saved["config"]:
+                    self.cfg[_k] = _saved["config"][_k]
         self._state_callback = state_callback  # 状态变更回调（用于 WebSocket 推送）
 
         self._thread: Optional[threading.Thread] = None
@@ -104,7 +110,7 @@ class StrategyEngine:
     # ------------------------------------------------------------------
 
     def _save_state(self):
-        """保存锚点、初始值、交易记录到文件，重启时恢复"""
+        """保存锚点、初始值、交易记录、运行时配置到文件，重启时恢复"""
         try:
             data = {
                 "anchor_price": self.anchor_price,
@@ -114,6 +120,7 @@ class StrategyEngine:
                 "trades": self.trades[-200:],  # 保留最近 200 笔
                 "total_trades": self.total_trades,
                 "was_trading": self._trading_enabled,  # 重启后自动恢复交易
+                "config": self.cfg,  # 运行时配置（含 API 修改的下限/上限等）
                 "updated_at": datetime.now(BJT).isoformat(),
             }
             with open(STATE_FILE, "w") as f:
@@ -171,9 +178,9 @@ class StrategyEngine:
         """初始化（连接 + 拉数据 + 设锚）— 不启动交易循环"""
         if self._running:
             return False
-        # 先取消所有遗留的旧挂单（防止之前崩溃的残留）
+        # 只取消当前策略标的的订单（不碰合约、期权、其他币种）
         try:
-            self.api.cancel_all()
+            self.api.cancel_all(self.cfg["instrument_name"])
         except Exception:
             pass
         self._running = True
@@ -222,6 +229,8 @@ class StrategyEngine:
 
     def get_state(self):
         with self._lock:
+            # FIFO 计算交易盈亏
+            tp = self._calc_trading_pnl()
             return {
                 "status": self.status,
                 "initial_usdc": self.initial_usdc,
@@ -248,6 +257,7 @@ class StrategyEngine:
                 "last_update": self.last_update,
                 "start_time": self.start_time,
                 "total_pnl": self.total_value_usdc - self.initial_total_usdc,
+                "trading_pnl": tp,
                 "total_trades": self.total_trades,
                 "btc_cost_basis": self.btc_cost_basis,
                 "config": {
@@ -262,6 +272,26 @@ class StrategyEngine:
                     "testnet": self.testnet,
                 },
             }
+
+    def _calc_trading_pnl(self):
+        """FIFO 配对买卖，计算已实现的交易盈亏"""
+        buy_q = [t["amount_btc"] * t["price"] / t["amount_btc"] for t in self.trades if t["side"] == "buy"]
+        sell_q = [t for t in self.trades if t["side"] == "sell"]
+        btc_left = [t["amount_btc"] for t in self.trades if t["side"] == "buy"]
+        pnl = 0.0
+        bi = 0
+        for s in sell_q:
+            amt_s = s["amount_btc"]
+            while amt_s > 0.000001 and bi < len(btc_left):
+                pair = min(btc_left[bi], amt_s)
+                cost = pair * buy_q[bi]
+                revenue = pair * s["price"]
+                pnl += revenue - cost
+                btc_left[bi] -= pair
+                amt_s -= pair
+                if btc_left[bi] < 0.000001:
+                    bi += 1
+        return round(pnl, 2)
 
     # ------------------------------------------------------------------
     # 主循环
@@ -419,7 +449,7 @@ class StrategyEngine:
         interval_sec = self.cfg.get("rv_update_interval_minutes", 60) * 60
         if elapsed >= interval_sec:
             self._update_rv()
-        self.rv_updated_today = True
+            self.rv_updated_today = True
 
     def _update_rv(self):
         rv = self._calculate_daily_rv()
@@ -521,7 +551,14 @@ class StrategyEngine:
         try:
             orders = self.api.get_open_orders(self.cfg["instrument_name"])
             parsed = []
+            instrument = self.cfg["instrument_name"]
             for o in orders:
+                # 过滤：只保留我们策略标的的挂单，防止其他币种混入
+                if o.get("instrument_name", "") != instrument:
+                    self._log_info("Ignored non-%s order: %s %s @ %s",
+                                   instrument, o.get("instrument_name"),
+                                   o.get("direction"), o.get("price"))
+                    continue
                 filled = float(o.get("filled_amount", 0) or 0)
                 amount = float(o.get("amount", 0) or 0)
                 parsed.append({

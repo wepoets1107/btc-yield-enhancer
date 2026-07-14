@@ -353,9 +353,12 @@ class DeribitClient:
             "order_id": order_id,
         }, need_auth=True)
 
-    def cancel_all(self) -> dict:
-        """取消账户下所有订单"""
-        return self._call("private/cancel_all", {}, need_auth=True)
+    def cancel_all(self, instrument_name: str = "") -> dict:
+        """取消指定币种的所有订单（不传参则取消全部）"""
+        params = {}
+        if instrument_name:
+            params["instrument_name"] = instrument_name
+        return self._call("private/cancel_all", params, need_auth=True)
 
     def get_open_orders(
         self, instrument_name: Optional[str] = None
