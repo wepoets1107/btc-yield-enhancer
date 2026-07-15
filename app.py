@@ -80,7 +80,7 @@ if not DERIBIT_CLIENT_ID or not DERIBIT_CLIENT_SECRET:
 # ---------------------------------------------------------------------------
 # Flask + WebSocket
 # ---------------------------------------------------------------------------
-app = Flask(__name__)
+app = Flask(__name__, static_url_path='/btc-enhancer/static', static_folder='static')
 sock = Sock(app)
 
 engine: StrategyEngine = None
@@ -110,7 +110,7 @@ def broadcast_state(state: dict):
                 ws_clients.discard(c)
 
 
-@sock.route("/ws")
+@sock.route("/btc-enhancer/ws")
 def ws_handler(ws):
     """WebSocket 连接处理"""
     with ws_clients_lock:
@@ -152,7 +152,7 @@ def on_state_update(state: dict):
 # 页面路由
 # ---------------------------------------------------------------------------
 
-@app.route("/")
+@app.route("/btc-enhancer/")
 def index():
     """仪表盘主页"""
     html_path = os.path.join(os.path.dirname(__file__), "static", "dashboard.html")
@@ -168,7 +168,7 @@ def index():
 # REST API
 # ---------------------------------------------------------------------------
 
-@app.route("/api/status")
+@app.route("/btc-enhancer/api/status")
 def api_status():
     if engine is None:
         return jsonify({"error": "Strategy engine not initialized"}), 503
@@ -177,7 +177,7 @@ def api_status():
     return jsonify(state)
 
 
-@app.route("/api/init", methods=["POST"])
+@app.route("/btc-enhancer/api/init", methods=["POST"])
 def api_init():
     """初始化引擎（连接+拉数据）。如果引擎已在运行，保持不动。"""
     global engine
@@ -204,7 +204,7 @@ def api_init():
     return jsonify({"success": True, "message": "Engine initialized", "status": engine.status})
 
 
-@app.route("/api/start", methods=["POST"])
+@app.route("/btc-enhancer/api/start", methods=["POST"])
 def api_start():
     """启动交易"""
     global engine
@@ -233,7 +233,7 @@ def api_start():
     })
 
 
-@app.route("/api/stop", methods=["POST"])
+@app.route("/btc-enhancer/api/stop", methods=["POST"])
 def api_stop():
     if engine is None:
         return jsonify({"error": "No strategy running"}), 400
@@ -241,7 +241,7 @@ def api_stop():
     return jsonify({"success": True, "message": "Strategy stopping"})
 
 
-@app.route("/api/credentials", methods=["GET", "POST"])
+@app.route("/btc-enhancer/api/credentials", methods=["GET", "POST"])
 def api_credentials():
     """GET: 返回当前 API 凭证（ID 脱敏）；POST: 更新凭证并重建连接"""
     global DERIBIT_CLIENT_ID, DERIBIT_CLIENT_SECRET, engine
@@ -287,7 +287,7 @@ def api_credentials():
     return jsonify({"success": True, "message": "已切换凭证并重新连接"})
 
 
-@app.route("/api/params", methods=["GET", "POST"])
+@app.route("/btc-enhancer/api/params", methods=["GET", "POST"])
 def api_params():
     """GET: 返回当前可编辑参数列表  POST: 运行时修改参数"""
     global engine
@@ -359,7 +359,7 @@ def api_params():
     return jsonify({"success": True, "changed": changed})
 
 
-@app.route("/api/kline")
+@app.route("/btc-enhancer/api/kline")
 def api_kline():
     """拉主网 BTC_USDC 现货 K 线（公共 API，无需鉴权，不受 testnet 开关影响）"""
     try:
@@ -385,7 +385,7 @@ def api_kline():
         return jsonify({"error": str(e)}), 500
 
 
-@app.route("/api/test-connection")
+@app.route("/btc-enhancer/api/test-connection")
 def api_test_connection():
     results = {}
     for label, testnet in [("mainnet", False), ("testnet", True)]:
@@ -410,7 +410,7 @@ def api_test_connection():
     return jsonify(results)
 
 
-@app.route("/api/config", methods=["GET", "POST"])
+@app.route("/btc-enhancer/api/config", methods=["GET", "POST"])
 def api_config():
     global engine
     if request.method == "GET":

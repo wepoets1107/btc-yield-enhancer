@@ -322,6 +322,7 @@ class StrategyEngine:
                     # 动态更新状态：交易开关决定 status
                     target_status = "running" if self._trading_enabled else "ready"
                     if self.status != target_status:
+                        import sys; print(f"STATUS_CHANGE: {self.status} -> {target_status}", flush=True)
                         self._set_status(target_status)
 
                     self._update_index_price()
@@ -737,8 +738,13 @@ class StrategyEngine:
 
         # --- 冷静期：成交后 3 分钟内不挂新单（但成交检测照常进行）---
         if time.time() < self._cooldown_until:
-            self._log_info("Cooldown active, skipping new orders (%ds left)",
-                           int(self._cooldown_until - time.time()))
+            # 每 5 轮（约 2.5 分钟）才打印一次冷静期提示，防刷屏
+            if not hasattr(self, '_cooldown_log_counter'):
+                self._cooldown_log_counter = 0
+            self._cooldown_log_counter += 1
+            if self._cooldown_log_counter % 5 == 1:
+                self._log_info("Cooldown active, skipping new orders (%ds left)",
+                               int(self._cooldown_until - time.time()))
             return
 
         # --- 计算下单量 ---
@@ -772,9 +778,18 @@ class StrategyEngine:
                 self._log_info("Buy skipped: USDC insufficient (need %.2f have %.2f)",
                                buy_amount * buy_price, self.usdc_balance)
         elif self._our_buy_id:
-            self._log_info("Buy already active: %s", self._our_buy_id)
+            # 防刷屏：不成交时每 10 轮才打一次常规消息
+            if not hasattr(self, '_buy_skip_counter'):
+                self._buy_skip_counter = 0
+            self._buy_skip_counter += 1
+            if self._buy_skip_counter % 10 == 1:
+                self._log_info("Buy already active: %s", self._our_buy_id)
         else:
-            self._log_info("Buy skipped: amount=%.6f usdc_insuff=%s", buy_amount, self.usdc_insufficient)
+            if not hasattr(self, '_buy_skip_counter'):
+                self._buy_skip_counter = 0
+            self._buy_skip_counter += 1
+            if self._buy_skip_counter % 10 == 1:
+                self._log_info("Buy skipped: amount=%.6f usdc_insuff=%s", buy_amount, self.usdc_insufficient)
 
         # --- 挂卖出单（防重复：检查交易所是否已有同价位挂单）---
         sell_amount = calc_amount(sell_price)
@@ -800,9 +815,17 @@ class StrategyEngine:
                 self._log_info("Sell skipped: BTC insufficient (need %.6f have %.6f)",
                                sell_amount, self.btc_balance)
         elif self._our_sell_id:
-            self._log_info("Sell already active: %s", self._our_sell_id)
+            if not hasattr(self, '_sell_skip_counter'):
+                self._sell_skip_counter = 0
+            self._sell_skip_counter += 1
+            if self._sell_skip_counter % 10 == 1:
+                self._log_info("Sell already active: %s", self._our_sell_id)
         else:
-            self._log_info("Sell skipped: amount=%.6f btc_insuff=%s", sell_amount, self.btc_insufficient)
+            if not hasattr(self, '_sell_skip_counter'):
+                self._sell_skip_counter = 0
+            self._sell_skip_counter += 1
+            if self._sell_skip_counter % 10 == 1:
+                self._log_info("Sell skipped: amount=%.6f btc_insuff=%s", sell_amount, self.btc_insufficient)
 
     # ------------------------------------------------------------------
     # 交易执行
