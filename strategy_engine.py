@@ -180,7 +180,7 @@ class StrategyEngine:
             return False
         # 只取消当前策略标的的订单（不碰合约、期权、其他币种）
         try:
-            self.api.cancel_all(self.cfg["instrument_name"])
+            self.api.cancel_all_by_instrument(self.cfg["instrument_name"])
         except Exception:
             pass
         self._running = True
@@ -458,6 +458,7 @@ class StrategyEngine:
             old = self.daily_rv
             self.daily_rv = rv
             self.last_rv_update = datetime.now(BJT).isoformat()
+            self.rv_updated_today = True
             self._recalc_thresholds()
             logger.info("RV: %.2f%% → %.2f%%", old * 100, rv * 100)
 

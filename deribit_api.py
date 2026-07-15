@@ -360,6 +360,12 @@ class DeribitClient:
             params["instrument_name"] = instrument_name
         return self._call("private/cancel_all", params, need_auth=True)
 
+    def cancel_all_by_instrument(self, instrument_name: str) -> dict:
+        """只取消指定 instrument 的订单（不碰其他币种/期权/期货）"""
+        return self._call("private/cancel_all_by_instrument", {
+            "instrument_name": instrument_name,
+        }, need_auth=True)
+
     def get_open_orders(
         self, instrument_name: Optional[str] = None
     ) -> list[dict]:
