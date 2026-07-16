@@ -25,6 +25,7 @@ from statistics import stdev
 from typing import Optional
 
 from deribit_api import DeribitClient
+from deribit_ws import DeribitWSClient
 
 logger = logging.getLogger(__name__)
 
@@ -100,6 +101,12 @@ class StrategyEngine:
         self.open_orders: list[dict] = []  # 当前挂单列表
         self._our_buy_id: Optional[str] = None   # 我们挂的买入单 ID
         self._our_sell_id: Optional[str] = None  # 我们挂的卖出单 ID
+
+        # WebSocket 客户端（实时数据源）
+        self._ws: Optional[DeribitWSClient] = None
+        self._ws_enabled = False
+        self._last_ws_index_update = 0.0  # 最新一次从 WS 拿到指数价的时间戳
+        self._last_ws_check_ts = 0.0     # 最后一次检查 WS 连接的时间戳
 
         logger.info("StrategyEngine v2 created")
 
@@ -181,6 +188,19 @@ class StrategyEngine:
             self.api.cancel_all_by_instrument(self.cfg["instrument_name"])
         except Exception:
             pass
+        # 启动 WebSocket 客户端（后台线程）
+        try:
+            self._ws = DeribitWSClient(
+                self.api.client_id, self.api.client_secret,
+                testnet=self.testnet,
+                callback=self._on_ws_message,
+            )
+            self._ws.start()
+            self._ws_enabled = True
+            logger.info("WS client started")
+        except Exception as e:
+            logger.warning("WS client start failed (will use REST only): %s", e)
+            self._ws_enabled = False
         self._running = True
         self._trading_enabled = False
         self._our_buy_id = None
@@ -203,7 +223,15 @@ class StrategyEngine:
         return True
 
     def stop(self):
-        """停止一切：取消挂单 + 保存交易记录"""
+        """停止一切：WS 断开 + 取消挂单 + 保存交易记录"""
+        # 停 WS
+        if self._ws:
+            try:
+                self._ws.stop()
+            except Exception:
+                pass
+            self._ws = None
+            self._ws_enabled = False
         # 先取消我们的挂单
         self._cancel_our_orders()
         self._save_state()
@@ -517,20 +545,92 @@ class StrategyEngine:
             return None
 
     # ------------------------------------------------------------------
-    # 价格与余额
+    # WebSocket 回调（由 WS 线程调用）
     # ------------------------------------------------------------------
 
+    def _on_ws_message(self, msg: dict):
+        """WS 推送实时更新余额/指数价缓存"""
+        try:
+            channel = msg.get("channel", "")
+            data = msg.get("data", {})
+            if channel == "user.portfolio.btc":
+                bal = data.get("balance", 0)
+                if bal is not None and float(bal) >= 0:
+                    old = self.btc_balance
+                    self.btc_balance = float(bal)
+                    if abs(self.btc_balance - old) > 1e-6:
+                        logger.info("WS[btc]: %.6f -> %.6f", old, self.btc_balance)
+                    if self.btc_index_price > 0:
+                        self._recalc_values()
+            elif channel == "user.portfolio.usdc":
+                bal = data.get("balance", 0)
+                if bal is not None and float(bal) >= 0:
+                    old = self.usdc_balance
+                    self.usdc_balance = float(bal)
+                    if abs(self.usdc_balance - old) > 1e-6:
+                        logger.info("WS[usdc]: %.2f -> %.2f", old, self.usdc_balance)
+                    if self.btc_index_price > 0:
+                        self.btc_value_usdc = self.btc_balance * self.btc_index_price
+                        self.total_value_usdc = self.usdc_balance + self.btc_value_usdc
+            elif "index" in channel:
+                idx = data.get("index_price") or data.get("idx")
+                if idx is not None and float(idx) > 0:
+                    old = self.btc_index_price
+                    self.btc_index_price = float(idx)
+                    if abs(self.btc_index_price - old) > 0.1:
+                        logger.info("WS[index]: %.2f -> %.2f", old, self.btc_index_price)
+                    self._last_ws_index_update = time.time()
+                    self._recalc_values()
+                    self.api_connected = True
+            # WS 有推送说明连接正常
+            self.api_connected = True
+            if channel not in ("heartbeat",):
+                self._last_ws_check_ts = time.time()
+        except Exception as e:
+            logger.warning("WS callback error: %s", e)
+
+    def _recalc_values(self):
+        """根据当前余额和指数价重算 USDC 价值"""
+        self.btc_value_usdc = self.btc_balance * self.btc_index_price
+        self.total_value_usdc = self.usdc_balance + self.btc_value_usdc
+
+    # ------------------------------------------------------------------
+    # 价格与余额（优先 WS 缓存，WS 不可用时 fallback REST）
+    # ------------------------------------------------------------------
+
+    _INDEX_REST_INTERVAL = 15  # 指数价 REST 备用拉取间隔（秒）
+    _last_index_rest_ts = 0.0
+
     def _update_index_price(self):
-        price = self.api.get_index_price(self.cfg["index_name"])
+        """获取指数价：优先 WS 实时数据，WS 过期时 fallback REST"""
+        now = time.time()
+        # WS 有数据且在 30 秒内更新过，直接用
+        if self._ws_enabled and self.btc_index_price > 0 and (now - self._last_ws_index_update) < 30:
+            return
+        # REST fallback（限制频率）
+        if now - self._last_index_rest_ts < self._INDEX_REST_INTERVAL:
+            return
+        self._last_index_rest_ts = now
+        try:
+            price = self.api.get_index_price(self.cfg["index_name"])
+        except Exception:
+            price = None
         if price and price > 0:
             self.btc_index_price = price
-            self.btc_value_usdc = self.btc_balance * price
-            self.total_value_usdc = self.usdc_balance + self.btc_value_usdc
+            self._recalc_values()
             self.api_connected = True
-        else:
+        elif not self._ws_enabled or not self._ws or not self._ws.connected:
             self.api_connected = False
 
     def _fetch_balances(self):
+        """获取余额：WS 在线时不调 REST（WS 实时推送已在 _on_ws_message 更新）；
+        WS 不可用时 fallback REST。
+        """
+        if self._ws_enabled and self._ws and self._ws.connected and self._ws.authenticated:
+            # WS 在线，不调 REST，余额已由 _on_ws_message 实时更新
+            self.api_connected = True
+            return {"usdc_balance": self.usdc_balance, "btc_balance": self.btc_balance}
+        # WS 不可用，REST fallback
         try:
             usdc = self.api.get_account_summary(currency="USDC")
             if usdc:
@@ -540,7 +640,7 @@ class StrategyEngine:
                 self.btc_balance = float(btc.get("balance", 0))
             return {"usdc_balance": self.usdc_balance, "btc_balance": self.btc_balance}
         except Exception as e:
-            logger.error("Fetch balances: %s", e)
+            logger.error("Fetch balances (REST fallback): %s", e)
             return None
 
     def _fetch_open_orders(self):
