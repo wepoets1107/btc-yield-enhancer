@@ -114,8 +114,17 @@ class StrategyEngine:
     # 状态持久化
     # ------------------------------------------------------------------
 
+    STATE_BACKUP_DAYS = 7
+    _state_backup_dir = os.path.join(os.path.dirname(STATE_FILE), "state_backups")
+
     def _save_state(self):
-        """保存锚点、初始值、交易记录、运行时配置到文件，重启时恢复"""
+        """保存锚点、初始值、交易记录、运行时配置到文件，重启时恢复
+
+        安全策略：
+        1. 先写临时文件再 rename（原子写入，防止写一半崩溃）
+        2. 保存后 git commit 到仓库（历史版本可回滚）
+        3. 保留 7 天滚动备份
+        """
         try:
             data = {
                 "anchor_price": self.anchor_price,
@@ -128,10 +137,79 @@ class StrategyEngine:
                 "config": self.cfg,  # 运行时配置（含 API 修改的下限/上限等）
                 "updated_at": datetime.now(BJT).isoformat(),
             }
-            with open(STATE_FILE, "w") as f:
-                json.dump(data, f, default=str)
+            # 原子写入
+            import tempfile
+            tmp = tempfile.NamedTemporaryFile(
+                mode="w", dir=os.path.dirname(STATE_FILE),
+                delete=False, suffix=".tmp",
+            )
+            try:
+                json.dump(data, tmp, default=str)
+                tmp.flush()
+                os.fsync(tmp.fileno())
+                tmp.close()
+                os.replace(tmp.name, STATE_FILE)
+            except Exception:
+                try:
+                    os.unlink(tmp.name)
+                except Exception:
+                    pass
+                raise
+
+            # git commit（记录变更历史）
+            self._git_save_state()
+
+            # 7 天滚动备份
+            self._rotate_backup(data)
+
         except Exception as e:
             logger.warning("Failed to save state: %s", e)
+
+    def _git_save_state(self):
+        """git add + commit state.json（保留完整变更历史）"""
+        if not os.path.exists(os.path.join(os.path.dirname(STATE_FILE), ".git")):
+            return
+        try:
+            import subprocess
+            git_dir = os.path.dirname(STATE_FILE)
+            state_rel = os.path.basename(STATE_FILE)
+            # add
+            subprocess.run(
+                ["git", "add", state_rel],
+                cwd=git_dir, capture_output=True, timeout=10,
+            )
+            # commit（允许空提交不做）
+            subprocess.run(
+                ["git", "commit", "-m",
+                 f"state: anchor={self.anchor_price} trades={self.total_trades}"],
+                cwd=git_dir, capture_output=True, timeout=10,
+            )
+        except Exception as e:
+            logger.warning("git save state error: %s", e)
+
+    def _rotate_backup(self, data):
+        """保留 7 天的 state 滚动备份（按日期）"""
+        try:
+            import shutil
+            backup_dir = self._state_backup_dir
+            os.makedirs(backup_dir, exist_ok=True)
+            today = datetime.now(BJT).strftime("%Y%m%d")
+            backup_path = os.path.join(backup_dir, f"state.{today}.json")
+            if not os.path.exists(backup_path):
+                with open(backup_path, "w") as f:
+                    json.dump(data, f, default=str)
+            # 清理超过 7 天的备份
+            cutoff = (datetime.now(BJT) - timedelta(days=7)).strftime("%Y%m%d")
+            for fname in os.listdir(backup_dir):
+                if fname.startswith("state.") and fname.endswith(".json"):
+                    date_part = fname.split(".")[1]
+                    if date_part < cutoff:
+                        try:
+                            os.remove(os.path.join(backup_dir, fname))
+                        except Exception:
+                            pass
+        except Exception as e:
+            logger.warning("state backup error: %s", e)
 
     @staticmethod
     def _load_state():
