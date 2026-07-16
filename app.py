@@ -9,6 +9,7 @@ BTC 收益增强策略 - Flask Web 应用
 import os
 import json
 import logging
+import sys
 import threading
 import time as pytime
 
@@ -18,6 +19,12 @@ from flask_sock import Sock
 from strategy_engine import StrategyEngine
 from deribit_api import DeribitClient
 
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    stream=sys.stdout,
+    force=True,
+)
 logger = logging.getLogger(__name__)
 
 ENV_FILE = os.path.join(os.path.dirname(__file__), ".env")

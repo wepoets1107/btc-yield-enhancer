@@ -100,8 +100,6 @@ class StrategyEngine:
         self.open_orders: list[dict] = []  # 当前挂单列表
         self._our_buy_id: Optional[str] = None   # 我们挂的买入单 ID
         self._our_sell_id: Optional[str] = None  # 我们挂的卖出单 ID
-        self._last_usdc = 0.0       # 上次余额（用于校验成交）
-        self._last_btc = 0.0
 
         logger.info("StrategyEngine v2 created")
 
@@ -340,9 +338,6 @@ class StrategyEngine:
                 except Exception as e:
                     logger.error("Loop error: %s", e, exc_info=True)
                     self._add_error(f"Loop: {e}")
-                # 记录本轮余额作为下一轮的基准（用于成交校验）
-                self._last_usdc = self.usdc_balance
-                self._last_btc = self.btc_balance
                 time.sleep(self.cfg["poll_interval"])
 
         except Exception as e:
@@ -652,20 +647,35 @@ class StrategyEngine:
                     setattr(self, our_attr, existing)
                     self._log_info("Reclaimed %s order %s at price %d", side, existing, target_price)
 
-        # --- 检测成交：我们的订单消失了且余额变了 → 才是真成交 ---
+        # --- 检测成交：订单消失后查 Deribit 订单状态判断是否真成交 ---
+        # Bugfix v1.9: 不再依赖余额变化（期权估值会污染 BTC balance），
+        # 改为直接查询 get_order_state 的 order_state 字段。
         for side_key, our_id_attr in [("sell", "_our_sell_id"), ("buy", "_our_buy_id")]:
             our_id = getattr(self, our_id_attr)
             if our_id and our_id not in current_ids:
-                # 订单不见了 → 需要确认是成交还是取消
-                # 成交检查：卖出单消失 → BTC 减少；买入单消失 → USDC 减少
-                bal_changed = (
-                    self.btc_balance < self._last_btc - 0.00005
-                    if side_key == "sell"
-                    else self.usdc_balance < self._last_usdc - 0.01
-                )
-                if not bal_changed:
-                    # 余额没变 → 是被取消了（而非成交），只清 ID 不更新锚
-                    self._log_info("%s order %s cancelled/removed (no balance change)", side_key, our_id)
+                # 查 Deribit 订单状态确认是否成交
+                is_filled = False
+                try:
+                    order_result = self.api.get_order_state(our_id)
+                    if order_result["success"]:
+                        state = (order_result["result"] or {}).get("order_state", "")
+                        if state == "filled":
+                            is_filled = True
+                        elif state == "open":
+                            # 交易所说还在，但 get_open_orders 没返回——可能是 API 延迟，跳过本轮
+                            self._log_info("%s order %s missing from open list but state=open, skipping", side_key, our_id)
+                            continue
+                        elif state == "cancelled":
+                            # 明确取消了
+                            pass
+                    # 如果 success=False 或 result 为空 → 订单已不存在，视为取消
+                except Exception as e:
+                    self._log_info("%s order %s get_order_state failed: %s", side_key, our_id, e)
+                    # API 失败时回退：不处理，留到下一轮再说
+                    continue
+
+                if not is_filled:
+                    self._log_info("%s order %s was cancelled/removed (not filled)", side_key, our_id)
                     setattr(self, our_id_attr, None)
                     continue
 
