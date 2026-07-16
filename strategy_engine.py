@@ -379,7 +379,7 @@ class StrategyEngine:
 
     def _calc_trading_pnl(self):
         """FIFO 配对买卖，计算已实现的交易盈亏"""
-        buy_q = [t["amount_btc"] * t["price"] / t["amount_btc"] for t in self.trades if t["side"] == "buy"]
+        buy_q = [t["price"] for t in self.trades if t["side"] == "buy"]
         sell_q = [t for t in self.trades if t["side"] == "sell"]
         btc_left = [t["amount_btc"] for t in self.trades if t["side"] == "buy"]
         pnl = 0.0
@@ -426,7 +426,7 @@ class StrategyEngine:
                     # 动态更新状态：交易开关决定 status
                     target_status = "running" if self._trading_enabled else "ready"
                     if self.status != target_status:
-                        import sys; print(f"STATUS_CHANGE: {self.status} -> {target_status}", flush=True)
+                        logger.info("STATUS_CHANGE: %s -> %s", self.status, target_status)
                         self._set_status(target_status)
 
                     self._update_index_price()
@@ -553,7 +553,6 @@ class StrategyEngine:
         interval_sec = self.cfg.get("rv_update_interval_minutes", 60) * 60
         if elapsed >= interval_sec:
             self._update_rv()
-            self.rv_updated_today = True
 
     def _update_rv(self):
         rv = self._calculate_daily_rv()
@@ -915,7 +914,7 @@ class StrategyEngine:
                                        old_anchor, idx, deviation * 100, self.daily_rv * 100)
                         self._cooldown_until = time.time() + self._cooldown_seconds
                         self._log_info("方案A: Cooldown %ds", self._cooldown_seconds)
-                        self._cancel_our_orders()
+                        # 对侧挂单已在成交处理中取消，此处无需重复 cancel
                         buy_price = round(self.lower_threshold)
                         sell_price = round(self.upper_threshold)
 
