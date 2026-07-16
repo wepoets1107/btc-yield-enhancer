@@ -477,12 +477,10 @@ class StrategyEngine:
             return False
         self._fetch_instrument_info()
 
-        # 2. 查余额
+        # 2. 查余额（仅用于校验，不做初始记录——初始值应该从 state.json 恢复）
         bal = self._fetch_balances()
         if bal is None:
             return False
-        self.initial_usdc = bal["usdc_balance"]
-        self.initial_btc = bal["btc_balance"]
 
         # 3. 获取指数价
         price = self.api.get_index_price(self.cfg["index_name"])
@@ -491,17 +489,14 @@ class StrategyEngine:
             return False
         self.btc_index_price = price
 
-        self.initial_total_usdc = self.initial_usdc + self.initial_btc * price
-        logger.info("Initial: USDC=%.2f BTC=%.6f total=$%.2f",
-                    self.initial_usdc, self.initial_btc, self.initial_total_usdc)
-
-        # 4. 锚点：优先恢复上次保存的值，首次启动则用指数价
+        # 4. 锚点 + 初始值：优先恢复上次保存的值，首次部署才 snapshot
         saved = self._load_state()
         if saved and abs(saved["anchor_price"] - price) / price < 0.10:
             self.anchor_price = saved["anchor_price"]
-            self.initial_usdc = saved.get("initial_usdc", self.initial_usdc)
-            self.initial_btc = saved.get("initial_btc", self.initial_btc)
-            self.initial_total_usdc = saved.get("initial_total_usdc", self.initial_total_usdc)
+            self.initial_usdc = saved.get("initial_usdc", bal["usdc_balance"])
+            self.initial_btc = saved.get("initial_btc", bal["btc_balance"])
+            self.initial_total_usdc = saved.get("initial_total_usdc",
+                bal["usdc_balance"] + bal["btc_balance"] * price)
             # 恢复历史交易记录
             old_trades = saved.get("trades", [])
             if old_trades:
@@ -515,6 +510,13 @@ class StrategyEngine:
                 self._trading_enabled = True
                 logger.info("Trading auto-resumed from saved state")
         else:
+            # 首次部署或 state 坏了：用当前 balance snapshot 作为初始值
+            if self.initial_total_usdc == 0:
+                self.initial_usdc = bal["usdc_balance"]
+                self.initial_btc = bal["btc_balance"]
+                self.initial_total_usdc = self.initial_usdc + self.initial_btc * price
+                logger.info("Initial snapshot: USDC=%.2f BTC=%.6f total=$%.2f",
+                            self.initial_usdc, self.initial_btc, self.initial_total_usdc)
             self.anchor_price = price
             logger.info("Anchor set to index price: %.2f", self.anchor_price)
 
