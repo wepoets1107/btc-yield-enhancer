@@ -275,6 +275,18 @@ A: No. The strategy only touches BTC/USDC spot orders. It cancels by instrument 
 
 ---
 
+## Support / 打赏
+
+If this project helps you, consider supporting the community:
+
+```
+EVM: 0x29f091DAA3dfee8100645ee24239bCC3ae174B42
+```
+
+打赏支持冰火岛社区发展
+
+---
+
 ## License / 许可
 
 MIT License. See [LICENSE](LICENSE).
