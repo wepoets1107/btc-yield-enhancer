@@ -35,7 +35,7 @@ DEFAULT_CONFIG = {
     "trade_size_usdc": 100.0,
     "rv_min": 0.005,       # 日化 RV 下限 0.5%
     "rv_max": 0.05,        # 日化 RV 上限 5.0%
-    "rv_update_interval_minutes": 15,  # RV 更新间隔（分钟，5分钟线12根窗口）
+    "rv_update_interval_minutes": 15,  # RV 更新间隔（分钟，兜底用；成交/方案A触发实时更新）
     "poll_interval": 30,
     "cooldown_seconds": 60,          # 交易冷却期（秒）
     "instrument_name": "BTC_USDC",
@@ -630,18 +630,6 @@ class StrategyEngine:
         if anchor <= 0 or self.daily_rv <= 0:
             return
 
-        # --- 方案A：指数价与锚点偏差超过日化RV时，自动重置锚点 ---
-        idx = self.btc_index_price
-        if idx > 0 and anchor > 0:
-            deviation = abs(idx / anchor - 1)
-            if deviation > self.daily_rv:
-                old_anchor = anchor
-                self.anchor_price = idx
-                anchor = idx
-                self._recalc_thresholds()
-                self._log_info("Anchor reset from %.2f to %.2f (deviation %.4f%%)",
-                               old_anchor, idx, deviation * 100)
-
         buy_price = round(self.lower_threshold)  # tick_size=1 → 整数
         sell_price = round(self.upper_threshold)
         trade_size = self.cfg["trade_size_usdc"]
@@ -700,6 +688,8 @@ class StrategyEngine:
                 except Exception:
                     pass
                 self.anchor_price = fill_price
+                # 成交后立刻重算 RV，新挂单直接用最新波动率
+                self._update_rv()
                 self._recalc_thresholds()
                 self._fetch_balances()
                 # 记录成交
@@ -722,7 +712,22 @@ class StrategyEngine:
                 if other_id:
                     self.api.cancel_order(other_id)
                     setattr(self, "_our_buy_id" if side_key == "sell" else "_our_sell_id", None)
-                self._log_info("Anchor updated to %.2f after %s fill", self.anchor_price, side_key)
+                # --- 方案A（后继）：成交后检查新锚点是否偏离当前指数价，偏离则继续追 ---
+                idx = self.btc_index_price
+                if idx > 0:
+                    deviation = abs(idx / self.anchor_price - 1)
+                    if deviation > self.daily_rv:
+                        old_anchor = self.anchor_price
+                        self.anchor_price = idx
+                        self._update_rv()
+                        self._recalc_thresholds()
+                        self._log_info("方案A: Anchor追 %.2f -> %.2f (deviation %.4f%%), RV=%.2f%%",
+                                       old_anchor, idx, deviation * 100, self.daily_rv * 100)
+                        self._cooldown_until = time.time() + self._cooldown_seconds
+                        self._log_info("方案A: Cooldown %ds", self._cooldown_seconds)
+                        self._cancel_our_orders()
+                        buy_price = round(self.lower_threshold)
+                        sell_price = round(self.upper_threshold)
 
         # --- 取消价位不对的挂单 ---
         for o in self.open_orders:
