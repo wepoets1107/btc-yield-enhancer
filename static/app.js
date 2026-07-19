@@ -3,6 +3,7 @@
   "use strict";
 
   var state = { status: "stopped", trading: false, alive: false };
+  var currentSymbol = "BTC_USDC";
   var chart = null,
     candleSeries = null,
     anchorLine = null,
@@ -27,6 +28,12 @@
   function fmtPct(v) { return v != null ? Number(v * 100).toFixed(2) + "%" : "--"; }
   function fmtAnchor(v) { return v != null && v > 0 ? "$" + Number(v).toFixed(2) : "--"; }
   function clsVal(n) { if (!n || n === 0) return ""; return n > 0 ? "up" : "down"; }
+
+  /* 多实例支持: 根据当前选中的标的决定API路径 */
+  function apiPath(path) {
+    if (currentSymbol === "BTC_USDC") return "/" + path;
+    return "/api/proxy/" + currentSymbol + "/" + path;
+  }
   function setDot(el, cls) { var d = $(el); if (d) d.className = "dot " + cls; }
 
   // ---- K 线图 ----
@@ -78,7 +85,7 @@
 
   async function fetchKline() {
     try {
-      var resp = await fetch("/btc-enhancer/api/kline");
+      var resp = await fetch(apiPath("api/kline"));
       var data = await resp.json();
       if (!data || data.error || !data.ticks || !data.ticks.length) return;
       var candles = [];
@@ -249,7 +256,8 @@
   function connectWS() {
     if (ws && ws.readyState === WebSocket.OPEN) return;
     var protocol = location.protocol === "https:" ? "wss:" : "ws:";
-    var url = protocol + "//" + location.host + "/btc-enhancer/ws";
+    var wsPort = currentSymbol === "BTC_USDC" ? 5050 : 5053;
+    var url = protocol + "//127.0.0.1:" + wsPort + "/ws";
     ws = new WebSocket(url);
 
     ws.onopen = function () {
@@ -276,19 +284,19 @@
   // ---- HTTP API（启停/测试） ----
   async function startStrategy() {
     $("btnStart").disabled = true;
-    try { await (await fetch("/btc-enhancer/api/start", { method: "POST" })).json(); } catch (e) {}
+    try { await (await fetch(apiPath("api/start"), { method: "POST" })).json(); } catch (e) {}
     $("btnStart").disabled = false;
   }
 
   async function stopStrategy() {
     $("btnStop").disabled = true;
-    try { await (await fetch("/btc-enhancer/api/stop", { method: "POST" })).json(); } catch (e) {}
+    try { await (await fetch(apiPath("api/stop"), { method: "POST" })).json(); } catch (e) {}
     $("btnStop").disabled = false;
   }
 
   async function testConnection() {
     try {
-      var d = await (await fetch("/btc-enhancer/api/test-connection")).json();
+      var d = await (await fetch(apiPath("api/test-connection"))).json();
       var m = "";
       if (d.mainnet && d.testnet) {
         m += "主网: " + (d.mainnet.connected ? "✅" : "❌ " + (d.mainnet.auth_error || "断开"));
@@ -305,7 +313,7 @@
 
     // 自动初始化引擎（只同步数据，不启动交易）
     try {
-      var resp = await fetch("/btc-enhancer/api/init", { method: "POST" });
+      var resp = await fetch(apiPath("api/init"), { method: "POST" });
       var result = await resp.json();
       console.log("Engine init:", result.message);
     } catch (e) {
@@ -320,7 +328,7 @@
 
     // 加载当前 API 凭证（脱敏显示）
     try {
-      var credResp = await fetch("/btc-enhancer/api/credentials");
+      var credResp = await fetch(apiPath("api/credentials"));
       var creds = await credResp.json();
       $("inpApiId").value = creds.client_id_masked || "";
       $("inpTestnet").value = creds.testnet ? "1" : "0";
@@ -333,7 +341,7 @@
       if (!apiId || !apiSecret) { alert("请输入完整的 Client ID 和 Secret"); return; }
       if (!confirm("⚠ 修改凭证将断开当前连接并重新初始化，确定继续？")) return;
       try {
-        var resp = await fetch("/btc-enhancer/api/credentials", {
+        var resp = await fetch(apiPath("api/credentials"), {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ client_id: apiId, client_secret: apiSecret }),
@@ -343,7 +351,7 @@
           alert("✅ " + result.message);
           $("inpApiSecret").value = "";  // 清空密码框
           // 重新获取脱敏后的凭证
-          var r = await (await fetch("/btc-enhancer/api/credentials")).json();
+          var r = await (await fetch(apiPath("api/credentials"))).json();
           $("inpApiId").value = r.client_id_masked || "";
         } else {
           alert("❌ " + (result.message || "保存失败"));
@@ -378,7 +386,7 @@
 
       if (Object.keys(body).length === 0) { alert("请输入有效参数"); return; }
       try {
-        var resp = await fetch("/btc-enhancer/api/params", {
+        var resp = await fetch(apiPath("api/params"), {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(body),
@@ -396,4 +404,20 @@
   if (document.readyState === "loading") {
     document.addEventListener("DOMContentLoaded", init);
   } else { init(); }
+
+  /* 多实例: 切换标的 */
+  var sel = $("symbolSelect");
+  if (sel) {
+    sel.addEventListener("change", function () {
+      currentSymbol = this.value;
+      var port = currentSymbol === "BTC_USDC" ? 5050 : 5053;
+      $("portLabel").textContent = ":" + port;
+      // 断开旧WS, 重连
+      if (ws) { try { ws.close(); } catch(e) {} ws = null; }
+      connectWS();
+      // 重拉全部数据
+      fetchStatus();
+      fetchKline();
+    });
+  }
 })();

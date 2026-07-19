@@ -12,6 +12,7 @@ import logging
 import sys
 import threading
 import time as pytime
+import argparse
 
 from flask import Flask, jsonify, request, make_response
 from flask_sock import Sock
@@ -87,7 +88,7 @@ if not DERIBIT_CLIENT_ID or not DERIBIT_CLIENT_SECRET:
 # ---------------------------------------------------------------------------
 # Flask + WebSocket
 # ---------------------------------------------------------------------------
-app = Flask(__name__, static_url_path='/btc-enhancer/static', static_folder='static')
+app = Flask(__name__, static_url_path='/static', static_folder='static')
 sock = Sock(app)
 
 engine: StrategyEngine = None
@@ -117,7 +118,7 @@ def broadcast_state(state: dict):
                 ws_clients.discard(c)
 
 
-@sock.route("/btc-enhancer/ws")
+@sock.route("/ws")
 def ws_handler(ws):
     """WebSocket 连接处理"""
     with ws_clients_lock:
@@ -159,7 +160,7 @@ def on_state_update(state: dict):
 # 页面路由
 # ---------------------------------------------------------------------------
 
-@app.route("/btc-enhancer/")
+@app.route("/")
 def index():
     """仪表盘主页"""
     html_path = os.path.join(os.path.dirname(__file__), "static", "dashboard.html")
@@ -175,7 +176,7 @@ def index():
 # REST API
 # ---------------------------------------------------------------------------
 
-@app.route("/btc-enhancer/api/status")
+@app.route("/api/status")
 def api_status():
     if engine is None:
         return jsonify({"error": "Strategy engine not initialized"}), 503
@@ -184,7 +185,7 @@ def api_status():
     return jsonify(state)
 
 
-@app.route("/btc-enhancer/api/init", methods=["POST"])
+@app.route("/api/init", methods=["POST"])
 def api_init():
     """初始化引擎（连接+拉数据）。如果引擎已在运行，保持不动。"""
     global engine
@@ -211,7 +212,7 @@ def api_init():
     return jsonify({"success": True, "message": "Engine initialized", "status": engine.status})
 
 
-@app.route("/btc-enhancer/api/start", methods=["POST"])
+@app.route("/api/start", methods=["POST"])
 def api_start():
     """启动交易"""
     global engine
@@ -240,7 +241,7 @@ def api_start():
     })
 
 
-@app.route("/btc-enhancer/api/stop", methods=["POST"])
+@app.route("/api/stop", methods=["POST"])
 def api_stop():
     if engine is None:
         return jsonify({"error": "No strategy running"}), 400
@@ -248,7 +249,7 @@ def api_stop():
     return jsonify({"success": True, "message": "Strategy stopping"})
 
 
-@app.route("/btc-enhancer/api/credentials", methods=["GET", "POST"])
+@app.route("/api/credentials", methods=["GET", "POST"])
 def api_credentials():
     """GET: 返回当前 API 凭证（ID 脱敏）；POST: 更新凭证并重建连接"""
     global DERIBIT_CLIENT_ID, DERIBIT_CLIENT_SECRET, engine
@@ -294,7 +295,7 @@ def api_credentials():
     return jsonify({"success": True, "message": "已切换凭证并重新连接"})
 
 
-@app.route("/btc-enhancer/api/params", methods=["GET", "POST"])
+@app.route("/api/params", methods=["GET", "POST"])
 def api_params():
     """GET: 返回当前可编辑参数列表  POST: 运行时修改参数"""
     global engine
@@ -366,18 +367,19 @@ def api_params():
     return jsonify({"success": True, "changed": changed})
 
 
-@app.route("/btc-enhancer/api/kline")
+@app.route("/api/kline")
 def api_kline():
-    """拉主网 BTC_USDC 现货 K 线（公共 API，无需鉴权，不受 testnet 开关影响）"""
+    """拉主网现货 K 线（公共 API，无需鉴权）"""
     try:
         import requests as _requests
+        instr = os.environ.get("STRAT_INSTRUMENT", "BTC_USDC")
         end = int(pytime.time() * 1000)
         start = end - 7 * 86400 * 1000
         payload = {
             "jsonrpc": "2.0", "id": 1,
             "method": "public/get_tradingview_chart_data",
             "params": {
-                "instrument_name": "BTC_USDC",
+                "instrument_name": instr,
                 "start_timestamp": start,
                 "end_timestamp": end,
                 "resolution": "5",
@@ -392,7 +394,7 @@ def api_kline():
         return jsonify({"error": str(e)}), 500
 
 
-@app.route("/btc-enhancer/api/test-connection")
+@app.route("/api/test-connection")
 def api_test_connection():
     results = {}
     for label, testnet in [("mainnet", False), ("testnet", True)]:
@@ -417,7 +419,7 @@ def api_test_connection():
     return jsonify(results)
 
 
-@app.route("/btc-enhancer/api/config", methods=["GET", "POST"])
+@app.route("/api/config", methods=["GET", "POST"])
 def api_config():
     global engine
     if request.method == "GET":
@@ -440,11 +442,59 @@ def api_config():
 
 
 # ---------------------------------------------------------------------------
+# 多实例代理：前端通过此路由跨实例拉取 ETH 数据
+# ---------------------------------------------------------------------------
+SYMBOL_PORTS = {"BTC_USDC": 5050, "ETH_USDC": 5053}
+
+
+@app.route("/api/proxy/<target>/<path:subpath>")
+def api_proxy(target: str, subpath: str):
+    """代理到指定标的的引擎实例（前端同一个页面切换查看 BTC/ETH）"""
+    import requests as _req
+    port = SYMBOL_PORTS.get(target)
+    if not port:
+        return jsonify({"error": f"unknown target: {target}"}), 400
+    try:
+        if request.method == "POST":
+            resp = _req.post(f"http://127.0.0.1:{port}/{subpath}", json=request.get_json(silent=True) or {}, timeout=15)
+        else:
+            resp = _req.get(f"http://127.0.0.1:{port}/{subpath}", timeout=15)
+        return jsonify(resp.json())
+    except Exception as e:
+        return jsonify({"error": f"proxy to {target}:{port} failed: {e}"}), 502
+
+
+# ---------------------------------------------------------------------------
 # 入口
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="BTC/ETH 收益增强策略")
+    parser.add_argument("--symbol", default="BTC_USDC", choices=["BTC_USDC", "ETH_USDC"], help="交易标的")
+    parser.add_argument("--port", type=int, default=5050, help="Web 端口")
+    parser.add_argument("--trade-size", type=float, default=None, help="单笔交易额 USDC（默认 BTC=100, ETH=50）")
+    args = parser.parse_args()
+
+    # 根据标的设置配置
+    if args.symbol == "ETH_USDC":
+        instr = "ETH_USDC"
+        idx = "eth_usdc"
+    else:
+        instr = "BTC_USDC"
+        idx = "btc_usdc"
+    trade_size = args.trade_size if args.trade_size else (50 if args.symbol == "ETH_USDC" else 100)
+    # 覆盖默认配置
+    with engine_lock:
+        if engine is not None and engine._running:
+            logger.warning("Engine already running, config not applied")
+        else:
+            # 通过环境变量传递到引擎
+            os.environ["STRAT_INSTRUMENT"] = instr
+            os.environ["STRAT_INDEX"] = idx
+            os.environ["STRAT_TRADE_SIZE"] = str(trade_size)
+
     print("=" * 60)
-    print("  BTC 收益增强策略 - Dashboard + WebSocket")
-    print("  http://localhost:5050")
+    print(f"  {args.symbol.replace('_', '/')} 收益增强策略 - Dashboard + WebSocket")
+    print(f"  http://localhost:{args.port}")
+    print(f"  单笔交易: ${trade_size}  标的: {args.symbol}")
     print("=" * 60)
-    app.run(host="127.0.0.1", port=5050, debug=False)
+    app.run(host="127.0.0.1", port=args.port, debug=False)

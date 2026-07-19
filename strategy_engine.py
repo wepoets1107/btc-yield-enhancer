@@ -32,17 +32,26 @@ logger = logging.getLogger(__name__)
 BJT = timezone(timedelta(hours=8))
 STATE_FILE = os.path.join(os.path.dirname(__file__), "state.json")
 
+# 从环境变量覆盖默认配置（由 app.py 的 --symbol/--trade-size 设置）
+_ENV_INSTRUMENT = os.environ.get("STRAT_INSTRUMENT", "BTC_USDC")
+_ENV_INDEX = os.environ.get("STRAT_INDEX", "btc_usdc")
+_ENV_TRADE_SIZE = float(os.environ.get("STRAT_TRADE_SIZE", "100"))
+
 DEFAULT_CONFIG = {
-    "trade_size_usdc": 100.0,
-    "rv_min": 0.005,       # 日化 RV 下限 0.5%
-    "rv_max": 0.05,        # 日化 RV 上限 5.0%
-    "rv_update_interval_minutes": 15,  # RV 更新间隔（分钟，兜底用；成交/方案A触发实时更新）
+    "trade_size_usdc": _ENV_TRADE_SIZE,
+    "rv_min": 0.005,
+    "rv_max": 0.05,
+    "rv_update_interval_minutes": 15,
     "poll_interval": 30,
-    "cooldown_seconds": 60,          # 交易冷却期（秒）
-    "instrument_name": "BTC_USDC",
-    "index_name": "btc_usdc",
-    "min_poll_balance_usdc": 200,   # 资金保护阈值 $200
+    "cooldown_seconds": 60,
+    "instrument_name": _ENV_INSTRUMENT,
+    "index_name": _ENV_INDEX,
+    "min_poll_balance_usdc": 200,
 }
+
+# 按标的隔离 state 文件，支持 ETH/BTC 各自独立
+_STATE_SUFFIX = _ENV_INSTRUMENT.lower().replace("_", "")
+STATE_FILE = os.path.join(os.path.dirname(__file__), f"state_{_STATE_SUFFIX}.json")
 
 
 class StrategyEngine:
@@ -237,6 +246,13 @@ class StrategyEngine:
         cs_str = f"{self.contract_size:.10f}".rstrip("0").rstrip(".")
         decimals = max(0, len(cs_str.split(".")[1]) if "." in cs_str else 0)
         return round(raw, decimals)
+
+    def _round_price(self, price: float) -> float:
+        """按 tick_size 取整价格（BTC=1, ETH=0.1）"""
+        if self.tick_size <= 0:
+            return round(price, 1)
+        decimals = max(0, round(-math.log10(self.tick_size)))
+        return round(round(price / self.tick_size) * self.tick_size, decimals)
 
     def _fetch_instrument_info(self):
         try:
@@ -789,9 +805,9 @@ class StrategyEngine:
     # ------------------------------------------------------------------
 
     def _recalc_thresholds(self):
-        rv = self.daily_rv  # 用完整日化 RV 设通道宽度
-        self.upper_threshold = round(self.anchor_price * (1 + rv))   # tick_size=1
-        self.lower_threshold = round(self.anchor_price * (1 - rv))
+        rv = self.daily_rv
+        self.upper_threshold = self._round_price(self.anchor_price * (1 + rv))
+        self.lower_threshold = self._round_price(self.anchor_price * (1 - rv))
 
     def _manage_maker_orders(self):
         """每轮循环维护一对 maker 限价单：
@@ -804,8 +820,8 @@ class StrategyEngine:
         if anchor <= 0 or self.daily_rv <= 0:
             return
 
-        buy_price = round(self.lower_threshold)  # tick_size=1 → 整数
-        sell_price = round(self.upper_threshold)
+        buy_price = self._round_price(self.lower_threshold)
+        sell_price = self._round_price(self.upper_threshold)
         trade_size = self.cfg["trade_size_usdc"]
 
         # 获取当前所有挂单的 ID 集合，以及按价格索引

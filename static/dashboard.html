@@ -139,7 +139,15 @@ body{
 <div class="container">
   <!-- Top Bar -->
   <div class="topbar">
-    <h1>⚡ BTC 收益增强策略 <span class="badge stopped" id="statusBadge">已停止</span><span id="tradingLabel" style="font-size:12px;margin-left:8px;color:var(--text-dim)"></span></h1>
+    <h1>
+      <select id="symbolSelect" style="font-size:16px;background:var(--bg-card);color:var(--text);border:1px solid var(--border-strong);border-radius:6px;padding:4px 8px;cursor:pointer">
+        <option value="BTC_USDC">BTC/USDC</option>
+        <option value="ETH_USDC">ETH/USDC</option>
+      </select>
+      <span class="badge stopped" id="statusBadge">已停止</span>
+      <span id="tradingLabel" style="font-size:12px;margin-left:8px;color:var(--text-dim)"></span>
+      <span style="margin-left:12px;font-size:11px;background:rgba(48,54,61,0.3);padding:2px 8px;border-radius:4px;color:var(--text-dim)" id="portLabel">:5050</span>
+    </h1>
     <div class="topbar-actions">
       <button class="btn btn-primary" id="btnStart">▶ 启动</button>
       <button class="btn btn-danger" id="btnStop" disabled>⏹ 停止</button>
@@ -154,7 +162,7 @@ body{
 
   <!-- Price Chart -->
   <div class="chart-card" id="chartCard" style="display:none">
-    <div class="card-title">📈 BTC 价格 · K 线 + 策略线</div>
+    <div class="card-title">📈 价格 · K 线 + 策略线</div>
     <div class="legend" id="chartLegend">
       <span class="lg lg-line lg-up"></span><span>K 线涨</span>
       <span class="lg lg-line lg-down"></span><span>K 线跌</span>
@@ -267,7 +275,7 @@ body{
   </div>
 </div>
 
-<script src="/btc-enhancer/static/lightweight-charts.standalone.production.js"></script>
-<script src="/btc-enhancer/static/app.js?v=15"></script>
+<script src="/static/lightweight-charts.standalone.production.js"></script>
+<script src="/static/app.js?v=20"></script>
 </body>
 </html>
