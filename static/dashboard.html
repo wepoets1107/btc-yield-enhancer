@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>BTC 收益增强策略 · 仪表盘</title>
+<title id="pageTitle">收益增强策略 · 仪表盘</title>
 <style>
 :root{
   --bg:#0d1117; --bg-card:rgba(22,27,34,0.82); --bg-elevated:#161b22;
@@ -148,7 +148,7 @@ body{
     </div>
     <div class="topbar-info">
       <div id="lastUpdate">等待数据...</div>
-      <div style="font-size:11px;color:var(--text-faint)" id="topbarExtra">BTC/USDC · 轮询 30s</div>
+      <div style="font-size:11px;color:var(--text-faint)" id="topbarExtra">· 轮询 30s</div>
     </div>
   </div>
 
@@ -170,8 +170,8 @@ body{
     <div class="card">
       <div class="card-title">💰 余额</div>
       <div class="row"><span class="lbl">USDC</span><span class="val" id="vUsdc">--</span></div>
-      <div class="row"><span class="lbl">BTC</span><span class="val" id="vBtc">--</span></div>
-      <div class="row"><span class="lbl">BTC 价值</span><span class="val highlight" id="vBtcValue">--</span></div>
+      <div class="row"><span class="lbl" id="lblBtc">⧫</span><span class="val" id="vBtc">--</span></div>
+      <div class="row"><span class="lbl" id="lblBtcValue">⧫ 价值</span><span class="val highlight" id="vBtcValue">--</span></div>
       <div class="row"><span class="lbl">总资产</span><span class="val" id="vTotal">--</span></div>
     </div>
     <div class="card">
@@ -194,7 +194,7 @@ body{
     </div>
     <div class="card">
       <div class="card-title">📊 实时</div>
-      <div class="row"><span class="lbl">BTC 指数</span><span class="val highlight" id="vPrice">--</span></div>
+      <div class="row"><span class="lbl" id="lblIndex">⧫ 指数</span><span class="val highlight" id="vPrice">--</span></div>
       <div class="row"><span class="lbl">偏离锚点</span><span class="val" id="vDeviation">--</span></div>
       <div class="row"><span class="lbl">交易次数</span><span class="val" id="vTrades">0</span></div>
       <div class="row"><span class="lbl">交易盈亏</span><span class="val" id="vTradePnl">--</span></div>
@@ -204,7 +204,7 @@ body{
       <div class="card-title">⚠️ 资金</div>
       <div class="row"><span class="lbl">初始总资产</span><span class="val" id="vInitTotal">--</span></div>
       <div class="row"><span class="lbl">USDC 状态</span><span class="val" id="vUsdcStatus">--</span></div>
-      <div class="row"><span class="lbl">BTC 状态</span><span class="val" id="vBtcStatus">--</span></div>
+      <div class="row"><span class="lbl" id="lblBtcStatus">⧫ 状态</span><span class="val" id="vBtcStatus">--</span></div>
       <div class="row"><span class="lbl">RV 更新</span><span class="val" id="vRvStatus">--</span></div>
     </div>
   </div>
@@ -246,7 +246,7 @@ body{
   <div class="card trade-section">
     <div class="card-title">📋 交易记录 (最近50笔)</div>
     <table class="trade-table" id="tradeTable">
-      <thead><tr><th>时间</th><th>方向</th><th>数量 BTC</th><th>价格</th><th>金额 USDC</th><th>状态</th></tr></thead>
+      <thead><tr><th>时间</th><th>方向</th><th>数量 <span id="lblQty">⧫</span></th><th>价格</th><th>金额 USDC</th><th>状态</th></tr></thead>
       <tbody id="tradeBody"></tbody>
     </table>
     <div class="no-data" id="noTrades">暂无交易记录</div>

@@ -109,7 +109,15 @@
 
     // 动态显示标的名称（从 config 读取，如 BTC_USDC → BTC）
     var instr = data.config && data.config.instrument_name;
-    if (instr) $("symbolTitle").textContent = instr.replace("_USDC", "");
+    var sym = instr ? instr.replace("_USDC", "") : "⧫";
+    $("symbolTitle").textContent = sym;
+    document.title = sym + " 收益增强策略 · 仪表盘";
+    $("lblBtc").textContent = sym;
+    $("lblBtcValue").textContent = sym + " 价值";
+    $("lblBtcStatus").textContent = sym + " 状态";
+    $("lblIndex").textContent = sym + " 指数";
+    $("lblQty").textContent = sym;
+    $("topbarExtra").textContent = sym + "/USDC · 轮询 30s";
 
     state.status = data.status || "stopped";
     // trading = 真正在交易；alive = 引擎活着（含就绪/初始化/运行）
