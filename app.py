@@ -476,6 +476,36 @@ def api_config():
 # ---------------------------------------------------------------------------
 # 入口
 # ---------------------------------------------------------------------------
+def _auto_boot_engine():
+    """后台线程：进程拉起即自动建引擎 → initialize → start，无需手动 /api/init、/api/start。
+    测试网维护导致初始化失败时，每 15 秒重试，直到成功。"""
+    global engine
+    while True:
+        try:
+            with engine_lock:
+                if engine is None:
+                    engine = StrategyEngine(
+                        DERIBIT_CLIENT_ID, DERIBIT_CLIENT_SECRET,
+                        testnet=USE_TESTNET,
+                        state_callback=on_state_update,
+                    )
+                if engine._running:
+                    # 引擎已在运行（可能之前手动启动过）→ 确保交易开启即可
+                    engine.start()
+                    logger.info("自动启动：引擎已在运行，已确保交易开启")
+                    return
+                if not engine.initialize():
+                    logger.warning("自动启动：初始化失败，15 秒后重试")
+                    pytime.sleep(15)
+                    continue
+                engine.start()
+                logger.info("自动启动：引擎已初始化并开始交易")
+                return
+        except Exception as e:
+            logger.error("自动启动异常：%s", e, exc_info=True)
+            pytime.sleep(15)
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="BTC/ETH 收益增强策略")
     parser.add_argument("--symbol", default="BTC_USDC", choices=["BTC_USDC", "ETH_USDC"], help="交易标的")
@@ -491,4 +521,7 @@ if __name__ == "__main__":
     print(f"  http://localhost:{args.port}")
     print(f"  单笔交易: ${trade_size}  标的: {args.symbol}")
     print("=" * 60)
+    # 后台自动启动引擎：进程拉起即建引擎→initialize→start，测试网维护时自动重试
+    threading.Thread(target=_auto_boot_engine, daemon=True).start()
+
     app.run(host="127.0.0.1", port=args.port, debug=False)
