@@ -12,6 +12,7 @@
     klineReady = false;
   var ws = null,
     wsReconnectTimer = null;
+  var _sym = "BTC";  // 动态币种符号
 
   function $(id) { return document.getElementById(id); }
 
@@ -23,7 +24,7 @@
   }
 
   function fmtUsdc(v) { return v != null ? "$" + Number(v).toFixed(2) : "--"; }
-  function fmtBtc(v) { return v != null ? Number(v).toFixed(6) + " BTC" : "--"; }
+  function fmtBtc(v) { return v != null ? Number(v).toFixed(6) + " " + _sym : "--"; }
   function fmtPct(v) { return v != null ? Number(v * 100).toFixed(2) + "%" : "--"; }
   function fmtAnchor(v) { return v != null && v > 0 ? "$" + Number(v).toFixed(2) : "--"; }
   function clsVal(n) { if (!n || n === 0) return ""; return n > 0 ? "up" : "down"; }
@@ -110,6 +111,7 @@
     // 动态显示标的名称（从 config 读取，如 BTC_USDC → BTC）
     var instr = data.config && data.config.instrument_name;
     var sym = instr ? instr.replace("_USDC", "") : "⧫";
+    _sym = sym;
     $("symbolTitle").textContent = sym;
     document.title = sym + " 收益增强策略 · 仪表盘";
     $("lblBtc").textContent = sym;

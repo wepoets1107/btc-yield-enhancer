@@ -60,6 +60,7 @@ class DeribitWSClient:
         client_secret: str,
         testnet: bool = False,
         callback: Optional[Callable[[dict], None]] = None,
+        channels: Optional[list[str]] = None,
     ):
         self.client_id = client_id
         self.client_secret = client_secret
@@ -67,7 +68,12 @@ class DeribitWSClient:
         self.ws_url = self.WS_TESTNET if testnet else self.WS_MAINNET
         self._user_callback = callback
 
-        # 缓存（线程安全）
+        # 订阅频道（可由调用方指定，否则使用默认 BTC）
+        self._channels = channels or [
+            "user.portfolio.btc",
+            "user.portfolio.usdc",
+            "ticker.BTC_USDC.index",
+        ]
         self._cache_lock = threading.Lock()
         self._cached_usdc_balance = 0.0
         self._cached_btc_balance = 0.0

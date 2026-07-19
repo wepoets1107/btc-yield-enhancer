@@ -61,6 +61,10 @@ class StrategyEngine:
         self.api = DeribitClient(client_id, client_secret, testnet=testnet)
         self.testnet = testnet
         self.cfg = {**DEFAULT_CONFIG, **(config or {})}
+
+        # 从 instrument_name 推导现货币种（BTC_USDC → BTC, ETH_USDC → ETH）
+        self._spot_currency = self.cfg["instrument_name"].split("_")[0]
+        self._spot_currency_lower = self._spot_currency.lower()
         # 从 state.json 恢复运行时修改的配置（只恢复用户可调的键，不覆盖新默认值）
         _saved = self._load_state()
         if _saved and isinstance(_saved.get("config"), dict):
@@ -256,7 +260,7 @@ class StrategyEngine:
 
     def _fetch_instrument_info(self):
         try:
-            instruments = self.api.get_instruments(currency="BTC", kind="spot")
+            instruments = self.api.get_instruments(currency=self._spot_currency, kind="spot")
             for inst in instruments:
                 if inst["instrument_name"] == self.cfg["instrument_name"]:
                     self.contract_size = float(inst.get("contract_size", 0.0001))
@@ -288,6 +292,11 @@ class StrategyEngine:
                 self.api.client_id, self.api.client_secret,
                 testnet=self.testnet,
                 callback=self._on_ws_message,
+                channels=[
+                    f"user.portfolio.{self._spot_currency_lower}",
+                    "user.portfolio.usdc",
+                    f"ticker.{self.cfg['instrument_name']}.index",
+                ],
             )
             self._ws.start()
             self._ws_enabled = True
@@ -648,13 +657,13 @@ class StrategyEngine:
         try:
             channel = msg.get("channel", "")
             data = msg.get("data", {})
-            if channel == "user.portfolio.btc":
+            if channel == f"user.portfolio.{self._spot_currency_lower}":
                 bal = data.get("balance", 0)
                 if bal is not None and float(bal) >= 0:
                     old = self.btc_balance
                     self.btc_balance = float(bal)
                     if abs(self.btc_balance - old) > 1e-6:
-                        logger.info("WS[btc]: %.6f -> %.6f", old, self.btc_balance)
+                        logger.info("WS[%s]: %.6f -> %.6f", self._spot_currency_lower, old, self.btc_balance)
                     if self.btc_index_price > 0:
                         self._recalc_values()
             elif channel == "user.portfolio.usdc":
@@ -730,9 +739,9 @@ class StrategyEngine:
             usdc = self.api.get_account_summary(currency="USDC")
             if usdc:
                 self.usdc_balance = float(usdc.get("balance", 0))
-            btc = self.api.get_account_summary(currency="BTC")
-            if btc:
-                self.btc_balance = float(btc.get("balance", 0))
+            spot_bal = self.api.get_account_summary(currency=self._spot_currency)
+            if spot_bal:
+                self.btc_balance = float(spot_bal.get("balance", 0))
             return {"usdc_balance": self.usdc_balance, "btc_balance": self.btc_balance}
         except Exception as e:
             logger.error("Fetch balances (REST fallback): %s", e)
