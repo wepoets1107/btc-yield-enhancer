@@ -14,6 +14,33 @@ import threading
 import time as pytime
 import argparse
 
+# ===== 多实例支持：在导入 strategy_engine 之前解析命令行参数，确保 env 先设好 =====
+_CLI_PARSED = False
+
+
+def _parse_cli_early():
+    """模块顶层解析 --symbol/--port/--trade-size，在策略引擎导入前设置环境变量"""
+    global _CLI_PARSED
+    if _CLI_PARSED or not hasattr(sys, 'argv') or len(sys.argv) < 2:
+        return
+    # 只解析已知的 key=value 或 --key value 参数，不干涉 Flask 自身的参数
+    parser = argparse.ArgumentParser(add_help=False)
+    parser.add_argument("--symbol", type=str, default=None)
+    parser.add_argument("--port", type=int, default=None)
+    parser.add_argument("--trade-size", type=float, default=None)
+    args, _ = parser.parse_known_args()
+    if args.symbol:
+        instr_idx = {"BTC_USDC": ("BTC_USDC", "btc_usdc"), "ETH_USDC": ("ETH_USDC", "eth_usdc")}
+        instr, idx = instr_idx.get(args.symbol, ("BTC_USDC", "btc_usdc"))
+        ts = args.trade_size if args.trade_size else (50 if args.symbol == "ETH_USDC" else 100)
+        os.environ["STRAT_INSTRUMENT"] = instr
+        os.environ["STRAT_INDEX"] = idx
+        os.environ["STRAT_TRADE_SIZE"] = str(ts)
+    _CLI_PARSED = True
+
+
+_parse_cli_early()
+
 from flask import Flask, jsonify, request, make_response
 from flask_sock import Sock
 
@@ -442,29 +469,6 @@ def api_config():
 
 
 # ---------------------------------------------------------------------------
-# 多实例代理：前端通过此路由跨实例拉取 ETH 数据
-# ---------------------------------------------------------------------------
-SYMBOL_PORTS = {"BTC_USDC": 5050, "ETH_USDC": 5053}
-
-
-@app.route("/api/proxy/<target>/<path:subpath>")
-def api_proxy(target: str, subpath: str):
-    """代理到指定标的的引擎实例（前端同一个页面切换查看 BTC/ETH）"""
-    import requests as _req
-    port = SYMBOL_PORTS.get(target)
-    if not port:
-        return jsonify({"error": f"unknown target: {target}"}), 400
-    try:
-        if request.method == "POST":
-            resp = _req.post(f"http://127.0.0.1:{port}/{subpath}", json=request.get_json(silent=True) or {}, timeout=15)
-        else:
-            resp = _req.get(f"http://127.0.0.1:{port}/{subpath}", timeout=15)
-        return jsonify(resp.json())
-    except Exception as e:
-        return jsonify({"error": f"proxy to {target}:{port} failed: {e}"}), 502
-
-
-# ---------------------------------------------------------------------------
 # 入口
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
@@ -474,23 +478,8 @@ if __name__ == "__main__":
     parser.add_argument("--trade-size", type=float, default=None, help="单笔交易额 USDC（默认 BTC=100, ETH=50）")
     args = parser.parse_args()
 
-    # 根据标的设置配置
-    if args.symbol == "ETH_USDC":
-        instr = "ETH_USDC"
-        idx = "eth_usdc"
-    else:
-        instr = "BTC_USDC"
-        idx = "btc_usdc"
+    # 环境变量已在 _parse_cli_early 中设好，此处仅用于打印
     trade_size = args.trade_size if args.trade_size else (50 if args.symbol == "ETH_USDC" else 100)
-    # 覆盖默认配置
-    with engine_lock:
-        if engine is not None and engine._running:
-            logger.warning("Engine already running, config not applied")
-        else:
-            # 通过环境变量传递到引擎
-            os.environ["STRAT_INSTRUMENT"] = instr
-            os.environ["STRAT_INDEX"] = idx
-            os.environ["STRAT_TRADE_SIZE"] = str(trade_size)
 
     print("=" * 60)
     print(f"  {args.symbol.replace('_', '/')} 收益增强策略 - Dashboard + WebSocket")
