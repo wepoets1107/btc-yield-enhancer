@@ -68,12 +68,20 @@ class DeribitWSClient:
         self.ws_url = self.WS_TESTNET if testnet else self.WS_MAINNET
         self._user_callback = callback
 
-        # 订阅频道（可由调用方指定，否则使用默认 BTC）
-        self._channels = channels or [
+        # 订阅频道（由调用方按标的传入；否则向后兼容默认 BTC）
+        self._channels = list(channels) if channels else [
             "user.portfolio.btc",
             "user.portfolio.usdc",
             "ticker.BTC_USDC.index",
         ]
+        # 从频道推导现货币种（用于缓存分发）：user.portfolio.<cur> 中 cur != usdc 的那个
+        self._spot_currency = None
+        for _ch in self._channels:
+            if _ch.startswith("user.portfolio."):
+                _cur = _ch.split(".", 2)[-1]
+                if _cur != "usdc":
+                    self._spot_currency = _cur
+                    break
         self._cache_lock = threading.Lock()
         self._cached_usdc_balance = 0.0
         self._cached_btc_balance = 0.0
@@ -91,12 +99,8 @@ class DeribitWSClient:
         self._reconnect_delay = 5.0    # 初始重连间隔（秒）
         self._max_reconnect_delay = 60.0
 
-        # 订阅频道
-        self._channels = [
-            "user.portfolio.btc",
-            "user.portfolio.usdc",
-            "ticker.BTC_USDC.index",
-        ]
+        # 说明：频道已在上方由 channels 参数（或默认 BTC）确定，
+        # 此处不再覆盖，保证 ETH 实例能订阅到 user.portfolio.eth / ticker.ETH_USDC.index。
 
     # ------------------------------------------------------------------
     # 缓存属性（线程安全）
@@ -333,7 +337,8 @@ class DeribitWSClient:
             logger.warning("WS handle_message error: %s", e)
 
     def _update_cache(self, channel: str, data: dict):
-        if channel == "user.portfolio.btc":
+        # 现货币种缓存分发：按实例实际币种（BTC/ETH）动态匹配
+        if self._spot_currency and channel == f"user.portfolio.{self._spot_currency}":
             bal = _f(data.get("balance"))
             if bal >= 0:
                 self.cached_btc_balance = bal

@@ -590,10 +590,11 @@ class StrategyEngine:
             logger.info("RV: %.2f%% → %.2f%%", old * 100, rv * 100)
 
     def _calculate_daily_rv(self):
-        """用主网 BTC_USDC 现货 5 分钟 K 线，取 12 根(1小时窗口)的 RMS × √24 作为日化 RV"""
+        """用主网现货 5 分钟 K 线，取 12 根(1小时窗口)的 RMS × √24 作为日化 RV。
+        标的由 self.cfg["instrument_name"] 决定（BTC_USDC / ETH_USDC 等）。"""
         end = int(time.time() * 1000)
         start = end - 3 * 3600 * 1000  # 拉3小时确保有12根
-        data = self._fetch_public_kline("BTC_USDC", start, end, "5")
+        data = self._fetch_public_kline(self.cfg["instrument_name"], start, end, "5")
         if not data or not data.get("close") or not data.get("open"):
             return self._fallback_rv()
 

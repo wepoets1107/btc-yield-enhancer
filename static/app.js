@@ -129,7 +129,7 @@
     setStatus(data.status);
     $("lastUpdate").textContent = data.last_update ? data.last_update.split(".")[0].replace("T", " ") : "等待数据...";
 
-    var extra = "BTC/USDC · WS";
+    var extra = sym + "/USDC · WS";
     if (data.config && data.config.testnet) extra += " · TESTNET";
     $("topbarExtra").textContent = extra;
 
@@ -308,7 +308,7 @@
       if (d.mainnet && d.testnet) {
         m += "主网: " + (d.mainnet.connected ? "✅" : "❌ " + (d.mainnet.auth_error || "断开"));
         m += "\n测试网: " + (d.testnet.connected ? "✅" : "❌ " + (d.testnet.auth_error || "断开"));
-        if (d.testnet.connected) m += "\nBTC $" + (d.testnet.btc_index_price || "N/A") + " · USDC " + (d.testnet.usdc_balance || "N/A");
+        if (d.testnet.connected) m += "\n" + _sym + " $" + (d.testnet.btc_index_price || "N/A") + " · USDC " + (d.testnet.usdc_balance || "N/A");
       } else { m = d.connected ? "✅ 已连接" : "❌ " + (d.auth_error || "失败"); }
       alert(m);
     } catch (e) { alert("❌ " + e.message); }

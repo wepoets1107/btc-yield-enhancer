@@ -424,12 +424,17 @@ def api_kline():
 @app.route("/api/test-connection")
 def api_test_connection():
     results = {}
+    # 按当前实例标的动态取指数名与现货币种（ETH 实例 = eth_usdc / ETH）
+    _instr = os.environ.get("STRAT_INSTRUMENT", "BTC_USDC")
+    _idx = os.environ.get("STRAT_INDEX", "btc_usdc")
+    _spot = _instr.split("_")[0]
     for label, testnet in [("mainnet", False), ("testnet", True)]:
         client = DeribitClient(DERIBIT_CLIENT_ID, DERIBIT_CLIENT_SECRET, testnet=testnet)
         info = client.check_connection()
         if info["connected"]:
-            price = client.get_index_price("btc_usdc")
+            price = client.get_index_price(_idx)
             info["btc_index_price"] = price
+            info["spot_currency"] = _spot
             try:
                 usdc = client.get_account_summary(currency="USDC")
                 if usdc:
@@ -437,9 +442,9 @@ def api_test_connection():
             except Exception:
                 pass
             try:
-                btc = client.get_account_summary(currency="BTC")
-                if btc:
-                    info["btc_balance"] = btc.get("balance", 0)
+                spot_bal = client.get_account_summary(currency=_spot)
+                if spot_bal:
+                    info["btc_balance"] = spot_bal.get("balance", 0)
             except Exception:
                 pass
         results[label] = info
