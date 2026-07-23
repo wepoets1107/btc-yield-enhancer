@@ -6,6 +6,10 @@
 
 # 运行时状态
 state.json
+state_*.json
+state_backups/
+logs/
+monitor_1h.py
 __pycache__/
 *.pyc
 *.pyo
