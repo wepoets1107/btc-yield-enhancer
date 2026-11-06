@@ -1,0 +1,17 @@
+[Unit]
+Description=BTC Yield Enhancer - Linux Supervisor (auto-heal engine)
+After=network.target btc-yield-enhancer.service
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/root/openclaw-workspace/btc-yield-enhancer
+Environment=PATH=/root/openclaw-workspace/btc-yield-enhancer/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin
+ExecStart=/root/openclaw-workspace/btc-yield-enhancer/venv/bin/python /root/openclaw-workspace/btc-yield-enhancer/supervisor_linux.py
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
